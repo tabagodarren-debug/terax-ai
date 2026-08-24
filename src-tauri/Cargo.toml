@@ -1,11 +1,11 @@
 [package]
-name = "terax"
-version = "0.8.6"
-description = "Terax — an open-source AI-native terminal emulator"
-authors = ["crynta"]
+name = "afflow"
+version = "0.1.0"
+description = "Afflow desktop production workspace"
+authors = ["Afflow contributors"]
 license = "Apache-2.0"
 edition = "2021"
-default-run = "terax"
+default-run = "afflow"
 
 [workspace]
 members = ["crates/terax-cli", "crates/terax-control-protocol"]
@@ -102,7 +102,6 @@ windows-sys = { version = "0.61", features = [
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-autostart = "2"
-tauri-plugin-updater = "2"
 tauri-plugin-window-state = "2"
 
 [profile.dev]
