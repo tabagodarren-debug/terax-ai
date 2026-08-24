@@ -583,7 +583,7 @@ Saved → Researching → Scripting → Review → Generating → Editing → Re
 - [x] Add workstation switcher/sidebar
 - [x] Add workstation scaffolding command
 - [x] Add default prompt templates
-- [ ] Add configurable agent presets
+- [x] Add configurable agent presets
 - [ ] Detect installed Chrome and Edge browsers
 - [ ] Add shared and per-workstation Afflow browser profiles
 - [ ] Add saved website launchers and structured browser launching
@@ -659,9 +659,9 @@ The MVP is complete only when all of the following are true:
 - [ ] At least three separate niche workstations can be created and restored.
 - [ ] Each workstation has an independent file root and layout.
 - [ ] Markdown, image, and video assets can be opened from the file tree.
-- [ ] Four named agent presets are available.
-- [ ] Specialized agents reference their own configurable prompt files.
-- [ ] At least one supported AI CLI can run in every agent terminal.
+- [x] Four named agent presets are available.
+- [x] Specialized agents reference their own configurable prompt files.
+- [x] At least one supported AI CLI can run in every agent terminal.
 - [ ] At least four configured websites can launch in a dedicated normal browser window.
 - [ ] Shared and per-workstation Afflow browser-profile modes are available.
 - [ ] Sign-ins persist in the selected browser profile after Afflow and browser restarts.

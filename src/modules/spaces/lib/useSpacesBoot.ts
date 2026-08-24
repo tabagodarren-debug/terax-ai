@@ -1,3 +1,4 @@
+import { createDefaultWorkstationAgentPresets } from "@/modules/agents/lib/presets";
 import { native } from "@/modules/ai/lib/native";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import type { Tab } from "@/modules/tabs";
@@ -68,6 +69,7 @@ export function useSpacesBoot({
             env: parseWorkspaceScopeKey(
               usePreferencesStore.getState().defaultWorkspaceEnv,
             ),
+            agentPresets: createDefaultWorkstationAgentPresets(),
             createdAt: Date.now(),
             updatedAt: Date.now(),
           };

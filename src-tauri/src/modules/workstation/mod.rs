@@ -1,4 +1,5 @@
 pub mod iso_time;
+pub mod resolve;
 pub mod scaffold;
 pub mod template;
 

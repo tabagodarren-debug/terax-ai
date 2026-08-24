@@ -11,10 +11,19 @@ import { usePresence } from "@/lib/usePresence";
 import { useZoom } from "@/lib/useZoom";
 import { isMarkdownPath } from "@/lib/utils";
 import {
+  type AfflowAgentPresetId,
+  type AgentCliDetection,
   type AgentLaunchRequest,
   AgentNotificationsBridge,
+  type AgentPresetAvailability,
+  type AgentPresetUpdate,
+  detectAgentClis,
   findAgentLauncher,
   nextAttentionTarget,
+  resolveWorkstationAgentCommand,
+  resolveWorkstationFile,
+  rootForWorkstation,
+  startupInstructionForPreset,
   validateAgentLaunchCommand,
 } from "@/modules/agents";
 import {
@@ -80,6 +89,7 @@ import {
 import { accentFor } from "@/modules/spaces/lib/spaceColor";
 import { StatusBar } from "@/modules/statusbar";
 import {
+  type AgentPresetMenuConfig,
   type CloseTabsPlan,
   TabSwitcherHud,
   useTabSwitcher,
@@ -98,12 +108,15 @@ import {
   navigateFocusedBlocks,
   type PaneBounds,
   ptyIdForLeaf,
+  setTerminalFileLinkHandler,
+  type TerminalFileLinkTarget,
   type TerminalPaneHandle,
   useAgentActivityStore,
   useTerminalFileDrop,
   whenSessionReady,
   writeToSession,
 } from "@/modules/terminal";
+import { writeTerminalClipboard } from "@/modules/terminal/lib/terminalClipboard";
 import {
   ThemeProvider,
   useThemeFileEditing,
@@ -118,6 +131,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDirectory } from "@tauri-apps/plugin-dialog";
+import { openPath } from "@tauri-apps/plugin-opener";
 import type { SearchAddon } from "@xterm/addon-search";
 import {
   useCallback,
@@ -250,6 +264,39 @@ export default function App() {
       null,
     [activeSpaceId, workstations],
   );
+  const [agentCliDetections, setAgentCliDetections] = useState<
+    AgentCliDetection[]
+  >([]);
+  const [agentCliLoading, setAgentCliLoading] = useState(true);
+  const [agentCliError, setAgentCliError] = useState<string | null>(null);
+  const [authorizedAgentRoot, setAuthorizedAgentRoot] = useState<{
+    workstationId: string;
+    root: string;
+  } | null>(null);
+  const [agentPromptAvailability, setAgentPromptAvailability] = useState<
+    Partial<Record<AfflowAgentPresetId, AgentPresetAvailability>>
+  >({});
+  const [agentContextLoading, setAgentContextLoading] = useState(true);
+  const [agentContextError, setAgentContextError] = useState<string | null>(
+    null,
+  );
+
+  const refreshAgentCliDetection = useCallback(async () => {
+    setAgentCliLoading(true);
+    setAgentCliError(null);
+    try {
+      setAgentCliDetections(await detectAgentClis());
+    } catch (error) {
+      setAgentCliDetections([]);
+      setAgentCliError(`Could not detect command line tools: ${String(error)}`);
+    } finally {
+      setAgentCliLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshAgentCliDetection();
+  }, [refreshAgentCliDetection]);
   const workstationSidebarItems = useMemo(
     () =>
       workstations.map((workstation) => ({
@@ -303,6 +350,93 @@ export default function App() {
     activeSpaceId: activeSpaceId ?? DEFAULT_SPACE_ID,
     enabled: spacesHydrated,
   });
+
+  const activeWorkstationId = activeWorkstation?.id ?? null;
+  const activeWorkstationRoot = activeWorkstation?.root ?? null;
+  const activeWorkstationEnvKind = activeWorkstation?.env.kind ?? null;
+  useEffect(() => {
+    setAuthorizedAgentRoot(null);
+    setAgentPromptAvailability({});
+    setAgentContextError(null);
+
+    if (!spacesHydrated) {
+      setAgentContextLoading(true);
+      return;
+    }
+    if (
+      !activeWorkstationId ||
+      !activeWorkstationRoot ||
+      activeWorkstationEnvKind !== "local"
+    ) {
+      setAgentContextLoading(false);
+      if (activeWorkstationEnvKind && activeWorkstationEnvKind !== "local") {
+        setAgentContextError(
+          "Agent presets currently support Local workstations only.",
+        );
+      }
+      return;
+    }
+
+    let cancelled = false;
+    setAgentContextLoading(true);
+    void (async () => {
+      try {
+        const root = await native.workspaceAuthorize(activeWorkstationRoot);
+        const presets =
+          useSpaces
+            .getState()
+            .spaces.find(
+              (workstation) => workstation.id === activeWorkstationId,
+            )?.agentPresets ?? [];
+        const availabilityEntries = await Promise.all(
+          presets
+            .filter(
+              (preset): preset is typeof preset & { promptFile: string } =>
+                preset.promptFile !== null,
+            )
+            .map(async (preset) => {
+              try {
+                await resolveWorkstationFile({
+                  rootPath: root,
+                  relativePath: preset.promptFile,
+                });
+                return [preset.id, { available: true }] as const;
+              } catch (error) {
+                return [
+                  preset.id,
+                  {
+                    available: false,
+                    reason: `Prompt unavailable: ${String(error)}`,
+                  },
+                ] as const;
+              }
+            }),
+        );
+        if (cancelled) return;
+        setAuthorizedAgentRoot({ workstationId: activeWorkstationId, root });
+        setAgentPromptAvailability(
+          Object.fromEntries(availabilityEntries) as Partial<
+            Record<AfflowAgentPresetId, AgentPresetAvailability>
+          >,
+        );
+      } catch (error) {
+        if (cancelled) return;
+        setAgentContextError(
+          `Could not authorize workstation folder: ${String(error)}`,
+        );
+      } finally {
+        if (!cancelled) setAgentContextLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeWorkstationEnvKind,
+    activeWorkstationId,
+    activeWorkstationRoot,
+    spacesHydrated,
+  ]);
 
   const prevSpaceRef = useRef(activeSpaceId);
   useEffect(() => {
@@ -612,6 +746,32 @@ export default function App() {
     newBlockTab(inheritedCwdForNewTab());
   }, [newBlockTab, inheritedCwdForNewTab]);
 
+  const agentCliAvailability = useMemo<
+    AgentPresetMenuConfig["cliAvailability"]
+  >(() => {
+    const byId = new Map(
+      agentCliDetections.map((detection) => [detection.id, detection]),
+    );
+    const availability = Object.fromEntries(
+      (["claude", "codex", "gemini", "opencode"] as const).map((id) => {
+        const detection = byId.get(id);
+        return [
+          id,
+          detection?.available
+            ? { available: true }
+            : {
+                available: false,
+                reason: agentCliError
+                  ? "CLI detection is unavailable."
+                  : `${id === "opencode" ? "OpenCode" : id[0].toUpperCase() + id.slice(1)} is not available on PATH.`,
+              },
+        ];
+      }),
+    ) as NonNullable<AgentPresetMenuConfig["cliAvailability"]>;
+    availability.custom = { available: true };
+    return availability;
+  }, [agentCliDetections, agentCliError]);
+
   const launchAgentGroup = useCallback(
     (request: AgentLaunchRequest) => {
       const command = validateAgentLaunchCommand(request.command);
@@ -649,6 +809,211 @@ export default function App() {
       }
     },
     [inheritedCwdForNewTab, newAgentGroupTab],
+  );
+
+  const updateAgentPreset = useCallback(
+    (presetId: AfflowAgentPresetId, update: AgentPresetUpdate) => {
+      const workstationId = useSpaces.getState().activeId;
+      if (!workstationId) return;
+      useSpaces.getState().updateAgentPreset(workstationId, presetId, update);
+    },
+    [],
+  );
+
+  const launchAgentPreset = useCallback(
+    (presetId: AfflowAgentPresetId) => {
+      const state = useSpaces.getState();
+      const workstation = state.spaces.find(
+        (candidate) => candidate.id === state.activeId,
+      );
+      const preset = workstation?.agentPresets.find(
+        (candidate) => candidate.id === presetId,
+      );
+      if (!workstation || !preset || workstation.env.kind !== "local") return;
+      if (
+        !authorizedAgentRoot ||
+        authorizedAgentRoot.workstationId !== workstation.id
+      ) {
+        toast.error("Workstation folder is not ready");
+        return;
+      }
+      if (
+        preset.promptFile &&
+        agentPromptAvailability[preset.id]?.available === false
+      ) {
+        toast.error("Preset prompt is unavailable", {
+          description: agentPromptAvailability[preset.id]?.reason,
+        });
+        return;
+      }
+      if (
+        preset.launcherId !== "custom" &&
+        !agentCliDetections.some(
+          (detection) =>
+            detection.id === preset.launcherId && detection.available,
+        )
+      ) {
+        toast.error("Selected command line tool is unavailable");
+        return;
+      }
+      const command = resolveWorkstationAgentCommand(
+        preset,
+        usePreferencesStore.getState().agentLaunchCommands,
+      );
+      if (!command.ok) {
+        toast.error("Agent command is invalid", {
+          description: command.error,
+        });
+        return;
+      }
+
+      const { leafIds: presetLeafIds } = newAgentGroupTab(
+        authorizedAgentRoot.root,
+        preset.name,
+        1,
+      );
+      const hooksReady =
+        preset.launcherId === "custom"
+          ? Promise.resolve()
+          : (() => {
+              const launcher = findAgentLauncher(preset.launcherId);
+              return launcher.supportsHooks
+                ? invoke("agent_enable_hooks", {
+                    agent: preset.launcherId,
+                  }).catch((error) => {
+                    console.warn(
+                      `[terax] could not enable ${preset.launcherId} notifications:`,
+                      error,
+                    );
+                  })
+                : Promise.resolve();
+            })();
+
+      for (const leafId of presetLeafIds) {
+        void (async () => {
+          await Promise.all([whenSessionReady(leafId), hooksReady]);
+          if (!writeToSession(leafId, `${command.command}\r`)) {
+            console.error(
+              `[afflow] agent terminal ${leafId} closed before launch`,
+            );
+          }
+        })();
+      }
+    },
+    [
+      agentCliDetections,
+      agentPromptAvailability,
+      authorizedAgentRoot,
+      newAgentGroupTab,
+    ],
+  );
+
+  const openAgentPrompt = useCallback(
+    async (presetId: AfflowAgentPresetId) => {
+      const state = useSpaces.getState();
+      const workstation = state.spaces.find(
+        (candidate) => candidate.id === state.activeId,
+      );
+      const preset = workstation?.agentPresets.find(
+        (candidate) => candidate.id === presetId,
+      );
+      if (
+        !workstation ||
+        !preset?.promptFile ||
+        !authorizedAgentRoot ||
+        authorizedAgentRoot.workstationId !== workstation.id
+      ) {
+        toast.error("Preset prompt is unavailable");
+        return;
+      }
+      try {
+        const resolved = await resolveWorkstationFile({
+          rootPath: authorizedAgentRoot.root,
+          relativePath: preset.promptFile,
+        });
+        newMarkdownTab(resolved.absolutePath);
+      } catch (error) {
+        toast.error("Could not open preset prompt", {
+          description: String(error),
+        });
+      }
+    },
+    [authorizedAgentRoot, newMarkdownTab],
+  );
+
+  const copyAgentStartupInstruction = useCallback(
+    async (presetId: AfflowAgentPresetId) => {
+      const state = useSpaces.getState();
+      const workstation = state.spaces.find(
+        (candidate) => candidate.id === state.activeId,
+      );
+      const preset = workstation?.agentPresets.find(
+        (candidate) => candidate.id === presetId,
+      );
+      const instruction = preset ? startupInstructionForPreset(preset) : null;
+      if (!instruction) return;
+      try {
+        await writeTerminalClipboard(instruction);
+        toast.success("Startup instruction copied");
+      } catch (error) {
+        toast.error("Could not copy startup instruction", {
+          description: String(error),
+        });
+      }
+    },
+    [],
+  );
+
+  const openAgentOutputs = useCallback(async () => {
+    const root = authorizedAgentRoot?.root;
+    if (!root) {
+      toast.error("Workstation folder is not ready");
+      return;
+    }
+    try {
+      await openPath(`${root.replace(/[\\/]+$/, "")}/outputs`);
+    } catch (error) {
+      toast.error("Could not open outputs folder", {
+        description: String(error),
+      });
+    }
+  }, [authorizedAgentRoot]);
+
+  const agentPresetMenu = useMemo<AgentPresetMenuConfig>(
+    () => ({
+      presets: activeWorkstation?.agentPresets ?? [],
+      cliAvailability: agentCliAvailability,
+      promptAvailability: agentPromptAvailability,
+      workstationRoot: rootForWorkstation(
+        authorizedAgentRoot,
+        activeWorkstation?.id,
+      ),
+      loading: !spacesHydrated || agentCliLoading || agentContextLoading,
+      error: agentCliError ?? agentContextError,
+      onUpdatePreset: updateAgentPreset,
+      onLaunch: launchAgentPreset,
+      onOpenPrompt: (presetId) => void openAgentPrompt(presetId),
+      onCopyStartupInstruction: (presetId) =>
+        void copyAgentStartupInstruction(presetId),
+      onOpenOutputs: () => void openAgentOutputs(),
+    }),
+    [
+      activeWorkstation?.agentPresets,
+      activeWorkstation?.id,
+      agentCliAvailability,
+      agentCliError,
+      agentCliLoading,
+      agentContextError,
+      agentContextLoading,
+      agentPromptAvailability,
+      authorizedAgentRoot,
+      copyAgentStartupInstruction,
+      launchAgentPreset,
+      openAgentOutputs,
+      openAgentPrompt,
+      spacesHydrated,
+      updateAgentPreset,
+    ],
   );
 
   const sendCd = useCallback(
@@ -1464,6 +1829,62 @@ export default function App() {
     [openFileTab],
   );
 
+  const openTerminalFileReference = useCallback(
+    async ({ leafId, relativePath, line }: TerminalFileLinkTarget) => {
+      const tab = tabsRef.current.find(
+        (candidate) =>
+          candidate.kind === "terminal" && hasLeaf(candidate.paneTree, leafId),
+      );
+      const workstation = tab
+        ? useSpaces
+            .getState()
+            .spaces.find((candidate) => candidate.id === tab.spaceId)
+        : null;
+      if (!tab || !workstation?.root || workstation.env.kind !== "local") {
+        toast.error("File reference has no available workstation");
+        return;
+      }
+      try {
+        const root = await native.workspaceAuthorize(workstation.root);
+        const resolved = await resolveWorkstationFile({
+          rootPath: root,
+          relativePath,
+        });
+        const alreadyActive = useSpaces.getState().activeId === workstation.id;
+        if (!alreadyActive) {
+          useSpaces.getState().setActive(workstation.id);
+        }
+        if (
+          alreadyActive &&
+          line === undefined &&
+          isMarkdownPath(resolved.absolutePath)
+        ) {
+          newMarkdownTab(resolved.absolutePath);
+          return;
+        }
+        const id = openFileTab(resolved.absolutePath, true, {
+          spaceId: workstation.id,
+          activate: true,
+        });
+        if (line !== undefined) {
+          const editor = editorRefs.current.get(id);
+          if (editor) editor.gotoLine(line, { focus: true });
+          else pendingEditorNavigation.current.set(id, { line, focus: true });
+        }
+      } catch (error) {
+        toast.error("Could not open file reference", {
+          description: String(error),
+        });
+      }
+    },
+    [newMarkdownTab, openFileTab],
+  );
+
+  useEffect(() => {
+    setTerminalFileLinkHandler(openTerminalFileReference);
+    return () => setTerminalFileLinkHandler(null);
+  }, [openTerminalFileReference]);
+
   useControlBridge({
     ready: spacesHydrated && launchCwdResolved,
     tabsRef,
@@ -1516,6 +1937,7 @@ export default function App() {
               onNewEditor={() => setNewEditorOpen(true)}
               onNewGitGraph={openGitGraphFromContext}
               onLaunchAgents={launchAgentGroup}
+              agentPresets={agentPresetMenu}
               onClose={handleClose}
               onCloseTabsToRight={handleCloseTabsToRight}
               onCloseOtherTabs={handleCloseOtherTabs}

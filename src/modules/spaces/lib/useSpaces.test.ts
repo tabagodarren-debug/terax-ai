@@ -13,6 +13,7 @@ vi.mock("./store", () => ({
   saveSpacesList: persistence.saveSpacesList,
 }));
 
+import { createDefaultWorkstationAgentPresets } from "@/modules/agents/lib/presets";
 import type { SpaceMeta } from "./store";
 import { useSpaces } from "./useSpaces";
 
@@ -22,6 +23,7 @@ function space(id: string, root = `C:\\work\\${id}`): SpaceMeta {
     name: id.toUpperCase(),
     root,
     env: { kind: "local" },
+    agentPresets: createDefaultWorkstationAgentPresets(),
     createdAt: 1,
     updatedAt: 1,
   };
@@ -53,6 +55,7 @@ describe("useSpaces", () => {
       name: "Campaign",
       root: "C:\\campaign",
     });
+    expect(meta.agentPresets).toEqual(createDefaultWorkstationAgentPresets());
     expect(useSpaces.getState().spaces).toEqual([meta]);
     expect(persistence.saveSpacesList).toHaveBeenCalledWith([meta]);
   });
@@ -136,5 +139,68 @@ describe("useSpaces", () => {
       hydrated: true,
       initialActiveIndex: { a: 2 },
     });
+  });
+
+  it("updates one preset without sharing state between workstations", () => {
+    useSpaces.getState().hydrate([space("a"), space("b")], "a");
+
+    useSpaces.getState().updateAgentPreset("a", "script-generator", {
+      name: "Campaign Writer",
+      launcherId: "custom",
+      customCommand: "writer-agent --local",
+    });
+
+    const [a, b] = useSpaces.getState().spaces;
+    expect(a.agentPresets[1]).toMatchObject({
+      name: "Campaign Writer",
+      launcherId: "custom",
+      customCommand: "writer-agent --local",
+    });
+    expect(b.agentPresets[1]).toEqual(
+      createDefaultWorkstationAgentPresets()[1],
+    );
+    expect(a.agentPresets).not.toBe(b.agentPresets);
+    expect(persistence.saveSpacesList).toHaveBeenLastCalledWith([a, b]);
+  });
+
+  it("resets one role or the complete preset list without affecting peers", () => {
+    const a = space("a");
+    a.agentPresets[1] = {
+      ...a.agentPresets[1],
+      launcherId: "codex",
+      name: "Writer",
+    };
+    a.agentPresets[2] = {
+      ...a.agentPresets[2],
+      launcherId: "gemini",
+    };
+    const b = space("b");
+    useSpaces.getState().hydrate([a, b], "a");
+
+    useSpaces.getState().resetAgentPreset("a", "script-generator");
+    expect(useSpaces.getState().spaces[0].agentPresets[1]).toEqual(
+      createDefaultWorkstationAgentPresets()[1],
+    );
+    expect(useSpaces.getState().spaces[0].agentPresets[2].launcherId).toBe(
+      "gemini",
+    );
+
+    useSpaces.getState().resetAgentPresets("a");
+    const [resetA, unchangedB] = useSpaces.getState().spaces;
+    expect(resetA.agentPresets).toEqual(createDefaultWorkstationAgentPresets());
+    expect(unchangedB).toBe(b);
+  });
+
+  it("ignores preset mutations for unknown workstations or roles", () => {
+    useSpaces.getState().hydrate([space("a")], "a");
+
+    useSpaces.getState().updateAgentPreset("missing", "general", {
+      launcherId: "codex",
+    });
+    useSpaces.getState().resetAgentPreset("a", "missing" as "general");
+    useSpaces.getState().resetAgentPresets("missing");
+
+    expect(useSpaces.getState().spaces).toEqual([space("a")]);
+    expect(persistence.saveSpacesList).not.toHaveBeenCalled();
   });
 });

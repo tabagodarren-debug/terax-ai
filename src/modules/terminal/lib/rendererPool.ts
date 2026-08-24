@@ -25,7 +25,10 @@ import {
   readTerminalClipboard,
   writeTerminalClipboard,
 } from "./terminalClipboard";
-import { createTerminalLinkHandler } from "./terminalLinks";
+import {
+  createTerminalFileLinkProvider,
+  createTerminalLinkHandler,
+} from "./terminalLinks";
 import { pasteIntoTerminal } from "./terminalPaste";
 
 export const POOL_MAX_SIZE = 5;
@@ -266,6 +269,16 @@ function createSlot(): Slot {
     lastUsedAt: 0,
     imeState: createImeBridgeState(),
   };
+
+  term.registerLinkProvider(
+    createTerminalFileLinkProvider(
+      (bufferLineNumber) =>
+        term.buffer.active
+          .getLine(bufferLineNumber - 1)
+          ?.translateToString(true) ?? null,
+      () => slot.currentLeafId,
+    ),
+  );
 
   // Some WKWebView builds bypass xterm's composition events. The pure bridge
   // repairs that path and stands down when native composition is observed.

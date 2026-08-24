@@ -53,7 +53,7 @@ import {
 } from "react";
 import { labelFor } from "./lib/tabLabel";
 import type { EditorTab, Tab } from "./lib/useTabs";
-import { NewTabMenu } from "./NewTabMenu";
+import { type AgentPresetMenuConfig, NewTabMenu } from "./NewTabMenu";
 
 type Props = {
   tabs: Tab[];
@@ -66,6 +66,7 @@ type Props = {
   onNewEditor: () => void;
   onNewGitGraph: () => void;
   onLaunchAgents: (request: AgentLaunchRequest) => void;
+  agentPresets: AgentPresetMenuConfig;
   onClose: (id: number) => void;
   /** Chrome-style: close every tab to the right of the given tab. */
   onCloseTabsToRight: (id: number) => void;
@@ -92,6 +93,7 @@ export function TabBar({
   onNewEditor,
   onNewGitGraph,
   onLaunchAgents,
+  agentPresets,
   onClose,
   onCloseTabsToRight,
   onCloseOtherTabs,
@@ -594,6 +596,7 @@ export function TabBar({
           onNewEditor={onNewEditor}
           onNewGitGraph={onNewGitGraph}
           onLaunchAgents={onLaunchAgents}
+          agentPresets={agentPresets}
         />
       </div>
     </div>

@@ -1,3 +1,10 @@
+import {
+  type AfflowAgentPresetId,
+  createDefaultWorkstationAgentPresets,
+  DEFAULT_WORKSTATION_AGENT_PRESETS,
+  normalizeWorkstationAgentPresets,
+  type WorkstationAgentPreset,
+} from "@/modules/agents/lib/presets";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { parseWorkspaceScopeKey, type WorkspaceEnv } from "@/modules/workspace";
 import { create } from "zustand";
@@ -15,6 +22,10 @@ export type CreateInput = {
   root: string | null;
   env?: WorkspaceEnv;
 };
+
+export type AgentPresetUpdate = Partial<
+  Pick<WorkstationAgentPreset, "name" | "launcherId" | "customCommand">
+>;
 
 type State = {
   spaces: SpaceMeta[];
@@ -34,6 +45,16 @@ type State = {
   setEnv: (id: string, env: WorkspaceEnv) => void;
   setColor: (id: string, color: number | undefined) => void;
   reorder: (orderedIds: string[]) => void;
+  updateAgentPreset: (
+    workstationId: string,
+    presetId: AfflowAgentPresetId,
+    update: AgentPresetUpdate,
+  ) => void;
+  resetAgentPreset: (
+    workstationId: string,
+    presetId: AfflowAgentPresetId,
+  ) => void;
+  resetAgentPresets: (workstationId: string) => void;
   archive: (id: string) => string | null;
   remove: (id: string) => string | null;
   setActive: (id: string) => void;
@@ -74,6 +95,7 @@ export const useSpaces = create<State>((set, get) => ({
         parseWorkspaceScopeKey(
           usePreferencesStore.getState().defaultWorkspaceEnv,
         ),
+      agentPresets: createDefaultWorkstationAgentPresets(),
       createdAt: now,
       updatedAt: now,
     };
@@ -140,6 +162,63 @@ export const useSpaces = create<State>((set, get) => ({
     if (next.length !== get().spaces.length) return;
     set({ spaces: next });
     void saveSpacesList(next);
+  },
+
+  updateAgentPreset: (workstationId, presetId, update) => {
+    const current = get().spaces;
+    const workstation = current.find((space) => space.id === workstationId);
+    if (!workstation) return;
+    const preset = workstation.agentPresets.find(
+      (item) => item.id === presetId,
+    );
+    if (!preset) return;
+    const agentPresets = normalizeWorkstationAgentPresets(
+      workstation.agentPresets.map((item) =>
+        item.id === presetId ? { ...item, ...update } : item,
+      ),
+    );
+    const spaces = current.map((space) =>
+      space.id === workstationId
+        ? { ...space, agentPresets, updatedAt: Date.now() }
+        : space,
+    );
+    set({ spaces });
+    void saveSpacesList(spaces);
+  },
+
+  resetAgentPreset: (workstationId, presetId) => {
+    const current = get().spaces;
+    const workstation = current.find((space) => space.id === workstationId);
+    const fallback = DEFAULT_WORKSTATION_AGENT_PRESETS.find(
+      (preset) => preset.id === presetId,
+    );
+    if (!workstation || !fallback) return;
+    const agentPresets = workstation.agentPresets.map((preset) =>
+      preset.id === presetId ? { ...fallback } : preset,
+    );
+    const spaces = current.map((space) =>
+      space.id === workstationId
+        ? { ...space, agentPresets, updatedAt: Date.now() }
+        : space,
+    );
+    set({ spaces });
+    void saveSpacesList(spaces);
+  },
+
+  resetAgentPresets: (workstationId) => {
+    const current = get().spaces;
+    if (!current.some((space) => space.id === workstationId)) return;
+    const spaces = current.map((space) =>
+      space.id === workstationId
+        ? {
+            ...space,
+            agentPresets: createDefaultWorkstationAgentPresets(),
+            updatedAt: Date.now(),
+          }
+        : space,
+    );
+    set({ spaces });
+    void saveSpacesList(spaces);
   },
 
   archive: (id) => {

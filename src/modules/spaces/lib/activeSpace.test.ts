@@ -1,3 +1,4 @@
+import { createDefaultWorkstationAgentPresets } from "@/modules/agents/lib/presets";
 import type { WorkspaceEnv } from "@/modules/workspace";
 import { describe, expect, it } from "vitest";
 import { activeSpaceEnv, findActiveSpace, freshTabCwd } from "./activeSpace";
@@ -9,6 +10,7 @@ function space(over: Partial<SpaceMeta>): SpaceMeta {
     name: "Space",
     root: null,
     env: { kind: "local" },
+    agentPresets: createDefaultWorkstationAgentPresets(),
     createdAt: 0,
     updatedAt: 0,
     ...over,

@@ -1,3 +1,7 @@
+import {
+  normalizeWorkstationAgentPresets,
+  type WorkstationAgentPreset,
+} from "@/modules/agents/lib/presets";
 import type { WorkspaceEnv } from "@/modules/workspace";
 import { LazyStore } from "@tauri-apps/plugin-store";
 import type { SerializedTab } from "./serialize";
@@ -7,6 +11,7 @@ export type SpaceMeta = {
   name: string;
   root: string | null;
   env: WorkspaceEnv;
+  agentPresets: WorkstationAgentPreset[];
   /** Opt-in accent, index into SPACE_COLORS. Undefined = theme primary. */
   color?: number;
   createdAt: number;
@@ -18,7 +23,7 @@ export type SpaceState = {
   activeTabIndex: number;
 };
 
-export const SPACE_STORE_SCHEMA_VERSION = 1;
+export const SPACE_STORE_SCHEMA_VERSION = 2;
 
 const STORE_PATH = "terax-spaces.json";
 const KEY_SCHEMA_VERSION = "schemaVersion";
@@ -28,6 +33,7 @@ const STATE_PREFIX = "state:";
 const stateKey = (id: string) => `${STATE_PREFIX}${id}`;
 
 const store = new LazyStore(STORE_PATH, { defaults: {}, autoSave: 500 });
+let writesAllowed = true;
 
 export type LoadedSpaces = {
   spaces: SpaceMeta[];
@@ -73,12 +79,32 @@ function migrateSpace(value: unknown): SpaceMeta | null {
     name: raw.name,
     root: raw.root,
     env: raw.env,
+    agentPresets: normalizeWorkstationAgentPresets(raw.agentPresets),
     ...(typeof raw.color === "number" && Number.isInteger(raw.color)
       ? { color: raw.color }
       : {}),
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
   };
+}
+
+function hasCanonicalPresets(
+  value: unknown,
+  presets: readonly WorkstationAgentPreset[],
+): boolean {
+  if (!Array.isArray(value) || value.length !== presets.length) return false;
+  return presets.every((preset, index) => {
+    const raw = value[index];
+    if (!raw || typeof raw !== "object") return false;
+    const record = raw as Record<string, unknown>;
+    return (
+      record.id === preset.id &&
+      record.name === preset.name &&
+      record.launcherId === preset.launcherId &&
+      record.customCommand === preset.customCommand &&
+      record.promptFile === preset.promptFile
+    );
+  });
 }
 
 export function migratePersistedSpaces(
@@ -108,7 +134,15 @@ export function migratePersistedSpaces(
     needsWrite:
       canWrite &&
       (storedVersion !== SPACE_STORE_SCHEMA_VERSION ||
-        spaces.length !== value.length),
+        spaces.length !== value.length ||
+        spaces.some(
+          (space, index) =>
+            !hasCanonicalPresets(
+              (value[index] as Record<string, unknown> | undefined)
+                ?.agentPresets,
+              space.agentPresets,
+            ),
+        )),
   };
 }
 
@@ -127,6 +161,9 @@ export async function loadAll(): Promise<LoadedSpaces> {
     }
   }
   const migrated = migratePersistedSpaces(rawSpaces, storedVersion);
+  writesAllowed =
+    typeof storedVersion !== "number" ||
+    storedVersion <= SPACE_STORE_SCHEMA_VERSION;
   if (migrated.needsWrite) {
     await saveSpacesList(migrated.spaces);
   }
@@ -134,19 +171,23 @@ export async function loadAll(): Promise<LoadedSpaces> {
 }
 
 export async function saveSpacesList(spaces: SpaceMeta[]): Promise<void> {
+  if (!writesAllowed) return;
   await store.set(KEY_SPACES, spaces);
   await store.set(KEY_SCHEMA_VERSION, SPACE_STORE_SCHEMA_VERSION);
 }
 
 export async function saveActiveId(id: string | null): Promise<void> {
+  if (!writesAllowed) return;
   await store.set(KEY_ACTIVE, id);
 }
 
 export async function saveState(id: string, state: SpaceState): Promise<void> {
+  if (!writesAllowed) return;
   await store.set(stateKey(id), state);
 }
 
 export async function deleteSpaceData(id: string): Promise<void> {
+  if (!writesAllowed) return;
   await store.delete(stateKey(id));
 }
 

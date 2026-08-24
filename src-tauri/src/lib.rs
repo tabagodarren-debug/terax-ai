@@ -1,8 +1,8 @@
 pub mod modules;
 
 use modules::{
-    agent, control, fs, git, history, lsp, net, pty, secrets, shell, vibrancy, workspace,
-    workstation,
+    agent, agent_presets, control, fs, git, history, lsp, net, pty, secrets, shell, vibrancy,
+    workspace, workstation,
 };
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -312,6 +312,8 @@ pub fn run() {
             workspace::workspace_authorize,
             workspace::workspace_current_dir,
             workstation::workstation_scaffold,
+            workstation::resolve::workstation_resolve_file,
+            agent_presets::agent_cli_detect,
             control::control_frontend_ready,
             control::control_respond,
             get_launch_dir,

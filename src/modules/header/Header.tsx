@@ -3,7 +3,7 @@ import { WindowControls } from "@/components/WindowControls";
 import { IS_MAC, USE_CUSTOM_WINDOW_CONTROLS } from "@/lib/platform";
 import { NotificationBell } from "@/modules/agents";
 import type { AgentLaunchRequest } from "@/modules/agents/lib/launcher";
-import type { Tab } from "@/modules/tabs";
+import type { AgentPresetMenuConfig, Tab } from "@/modules/tabs";
 import { TabBar } from "@/modules/tabs";
 import {
   CommandIcon,
@@ -35,6 +35,7 @@ type Props = {
   onNewEditor: () => void;
   onNewGitGraph: () => void;
   onLaunchAgents: (request: AgentLaunchRequest) => void;
+  agentPresets: AgentPresetMenuConfig;
   onClose: (id: number) => void;
   /** Chrome-style: close every tab to the right of the given tab. */
   onCloseTabsToRight: (id: number) => void;
@@ -70,6 +71,7 @@ export function Header({
   onNewEditor,
   onNewGitGraph,
   onLaunchAgents,
+  agentPresets,
   onClose,
   onCloseTabsToRight,
   onCloseOtherTabs,
@@ -173,6 +175,7 @@ export function Header({
           onNewEditor={onNewEditor}
           onNewGitGraph={onNewGitGraph}
           onLaunchAgents={onLaunchAgents}
+          agentPresets={agentPresets}
           onClose={onClose}
           onCloseTabsToRight={onCloseTabsToRight}
           onCloseOtherTabs={onCloseOtherTabs}
