@@ -38,6 +38,7 @@ import {
 } from "@/modules/ai";
 import { AiComposerProvider } from "@/modules/ai/lib/composer";
 import { native } from "@/modules/ai/lib/native";
+import { useBrowserTools } from "@/modules/browser-tools";
 import { CommandPalette, createCommandItems } from "@/modules/command-palette";
 import { useControlBridge } from "@/modules/control";
 import {
@@ -350,6 +351,8 @@ export default function App() {
     activeSpaceId: activeSpaceId ?? DEFAULT_SPACE_ID,
     enabled: spacesHydrated,
   });
+
+  const browserTools = useBrowserTools(activeWorkstation, !spacesHydrated);
 
   const activeWorkstationId = activeWorkstation?.id ?? null;
   const activeWorkstationRoot = activeWorkstation?.root ?? null;
@@ -1938,6 +1941,7 @@ export default function App() {
               onNewGitGraph={openGitGraphFromContext}
               onLaunchAgents={launchAgentGroup}
               agentPresets={agentPresetMenu}
+              browserTools={browserTools}
               onClose={handleClose}
               onCloseTabsToRight={handleCloseTabsToRight}
               onCloseOtherTabs={handleCloseOtherTabs}

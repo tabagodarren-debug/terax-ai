@@ -1,5 +1,6 @@
 import { createDefaultWorkstationAgentPresets } from "@/modules/agents/lib/presets";
 import { native } from "@/modules/ai/lib/native";
+import { createDefaultWorkstationBrowserState } from "@/modules/browser-tools/lib/browserState";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import type { Tab } from "@/modules/tabs";
 import { DEFAULT_SPACE_ID } from "@/modules/tabs/lib/useTabs";
@@ -70,6 +71,7 @@ export function useSpacesBoot({
               usePreferencesStore.getState().defaultWorkspaceEnv,
             ),
             agentPresets: createDefaultWorkstationAgentPresets(),
+            browser: createDefaultWorkstationBrowserState(),
             createdAt: Date.now(),
             updatedAt: Date.now(),
           };

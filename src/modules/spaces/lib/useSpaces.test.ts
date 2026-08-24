@@ -14,6 +14,12 @@ vi.mock("./store", () => ({
 }));
 
 import { createDefaultWorkstationAgentPresets } from "@/modules/agents/lib/presets";
+import {
+  browserProfileIdForWorkstation,
+  createDefaultBrowserTools,
+  createDefaultWorkstationBrowserState,
+  isIsolatedBrowserProfileId,
+} from "@/modules/browser-tools/lib/browserState";
 import type { SpaceMeta } from "./store";
 import { useSpaces } from "./useSpaces";
 
@@ -24,6 +30,9 @@ function space(id: string, root = `C:\\work\\${id}`): SpaceMeta {
     root,
     env: { kind: "local" },
     agentPresets: createDefaultWorkstationAgentPresets(),
+    browser: createDefaultWorkstationBrowserState(
+      browserProfileIdForWorkstation(id),
+    ),
     createdAt: 1,
     updatedAt: 1,
   };
@@ -56,6 +65,12 @@ describe("useSpaces", () => {
       root: "C:\\campaign",
     });
     expect(meta.agentPresets).toEqual(createDefaultWorkstationAgentPresets());
+    expect(meta.browser).toMatchObject({
+      profileMode: "workstation",
+      tools: createDefaultBrowserTools(),
+      openOnWorkstationLaunch: false,
+    });
+    expect(isIsolatedBrowserProfileId(meta.browser.profileId)).toBe(true);
     expect(useSpaces.getState().spaces).toEqual([meta]);
     expect(persistence.saveSpacesList).toHaveBeenCalledWith([meta]);
   });
@@ -199,6 +214,111 @@ describe("useSpaces", () => {
     });
     useSpaces.getState().resetAgentPreset("a", "missing" as "general");
     useSpaces.getState().resetAgentPresets("missing");
+
+    expect(useSpaces.getState().spaces).toEqual([space("a")]);
+    expect(persistence.saveSpacesList).not.toHaveBeenCalled();
+  });
+
+  it("switches profile mode without replacing the isolated profile id", () => {
+    useSpaces.getState().hydrate([space("a"), space("b")], "a");
+    const isolatedId = useSpaces.getState().spaces[0].browser.profileId;
+
+    useSpaces.getState().setBrowserProfileMode("a", "shared");
+    useSpaces.getState().setBrowserOpenOnWorkstationLaunch("a", true);
+    useSpaces.getState().setBrowserProfileMode("a", "workstation");
+
+    const [a, b] = useSpaces.getState().spaces;
+    expect(a.browser).toMatchObject({
+      profileMode: "workstation",
+      profileId: isolatedId,
+      openOnWorkstationLaunch: true,
+    });
+    expect(b).toEqual(space("b"));
+    expect(persistence.saveSpacesList).toHaveBeenLastCalledWith([a, b]);
+  });
+
+  it("adds, updates, reorders, and removes tools within one workstation", () => {
+    const a = space("a");
+    a.browser.tools = [];
+    const b = space("b");
+    useSpaces.getState().hydrate([a, b], "a");
+
+    const first = useSpaces.getState().addBrowserTool("a", {
+      name: "  Local App  ",
+      url: "http://localhost:5173",
+    });
+    const second = useSpaces.getState().addBrowserTool("a", {
+      name: "Research",
+      url: "https://example.com/research",
+    });
+    expect(first).toMatchObject({
+      name: "Local App",
+      url: "http://localhost:5173/",
+    });
+    expect(second).not.toBeNull();
+
+    useSpaces.getState().updateBrowserTool("a", first?.id ?? "", {
+      name: "Workspace App",
+    });
+    useSpaces
+      .getState()
+      .reorderBrowserTools("a", [second?.id ?? "", first?.id ?? ""]);
+    expect(
+      useSpaces.getState().spaces[0].browser.tools.map((tool) => tool.name),
+    ).toEqual(["Research", "Workspace App"]);
+
+    useSpaces.getState().removeBrowserTool("a", second?.id ?? "");
+    const [changedA, unchangedB] = useSpaces.getState().spaces;
+    expect(changedA.browser.tools).toEqual([
+      {
+        id: first?.id,
+        name: "Workspace App",
+        url: "http://localhost:5173/",
+      },
+    ]);
+    expect(unchangedB).toBe(b);
+  });
+
+  it("resets tools without replacing profile selection", () => {
+    const a = space("a");
+    a.browser = {
+      ...a.browser,
+      profileMode: "shared",
+      tools: [],
+      openOnWorkstationLaunch: true,
+    };
+    useSpaces.getState().hydrate([a], "a");
+
+    useSpaces.getState().resetBrowserTools("a");
+
+    expect(useSpaces.getState().spaces[0].browser).toEqual({
+      profileMode: "shared",
+      profileId: a.browser.profileId,
+      tools: createDefaultBrowserTools(),
+      openOnWorkstationLaunch: true,
+    });
+  });
+
+  it("rejects invalid tool input and ignores unknown browser mutations", () => {
+    useSpaces.getState().hydrate([space("a")], "a");
+
+    expect(() =>
+      useSpaces.getState().addBrowserTool("a", {
+        name: "Unsafe",
+        url: "file:///tmp/data",
+      }),
+    ).toThrow("HTTP or HTTPS");
+    expect(
+      useSpaces.getState().addBrowserTool("missing", {
+        name: "Missing",
+        url: "https://example.com",
+      }),
+    ).toBeNull();
+    useSpaces.getState().updateBrowserTool("a", "missing", { name: "No" });
+    useSpaces.getState().removeBrowserTool("a", "missing");
+    useSpaces.getState().resetBrowserTools("missing");
+    useSpaces.getState().setBrowserProfileMode("missing", "shared");
+    useSpaces.getState().setBrowserOpenOnWorkstationLaunch("missing", true);
 
     expect(useSpaces.getState().spaces).toEqual([space("a")]);
     expect(persistence.saveSpacesList).not.toHaveBeenCalled();

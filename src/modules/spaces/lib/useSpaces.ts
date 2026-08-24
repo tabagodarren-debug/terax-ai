@@ -5,6 +5,20 @@ import {
   normalizeWorkstationAgentPresets,
   type WorkstationAgentPreset,
 } from "@/modules/agents/lib/presets";
+import {
+  browserToolUrlBytes,
+  createDefaultBrowserTools,
+  createDefaultWorkstationBrowserState,
+  MAX_BROWSER_TOOLS,
+  MAX_BROWSER_URL_TOTAL_BYTES,
+  newBrowserToolId,
+  validateBrowserToolInput,
+} from "@/modules/browser-tools/lib/browserState";
+import type {
+  BrowserProfileMode,
+  BrowserTool,
+  BrowserToolInput,
+} from "@/modules/browser-tools/lib/types";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { parseWorkspaceScopeKey, type WorkspaceEnv } from "@/modules/workspace";
 import { create } from "zustand";
@@ -26,6 +40,8 @@ export type CreateInput = {
 export type AgentPresetUpdate = Partial<
   Pick<WorkstationAgentPreset, "name" | "launcherId" | "customCommand">
 >;
+
+export type BrowserToolUpdate = Partial<BrowserToolInput>;
 
 type State = {
   spaces: SpaceMeta[];
@@ -55,6 +71,26 @@ type State = {
     presetId: AfflowAgentPresetId,
   ) => void;
   resetAgentPresets: (workstationId: string) => void;
+  setBrowserProfileMode: (
+    workstationId: string,
+    mode: BrowserProfileMode,
+  ) => void;
+  setBrowserOpenOnWorkstationLaunch: (
+    workstationId: string,
+    enabled: boolean,
+  ) => void;
+  addBrowserTool: (
+    workstationId: string,
+    input: BrowserToolInput,
+  ) => BrowserTool | null;
+  updateBrowserTool: (
+    workstationId: string,
+    toolId: string,
+    update: BrowserToolUpdate,
+  ) => void;
+  removeBrowserTool: (workstationId: string, toolId: string) => void;
+  reorderBrowserTools: (workstationId: string, orderedIds: string[]) => void;
+  resetBrowserTools: (workstationId: string) => void;
   archive: (id: string) => string | null;
   remove: (id: string) => string | null;
   setActive: (id: string) => void;
@@ -96,6 +132,7 @@ export const useSpaces = create<State>((set, get) => ({
           usePreferencesStore.getState().defaultWorkspaceEnv,
         ),
       agentPresets: createDefaultWorkstationAgentPresets(),
+      browser: createDefaultWorkstationBrowserState(),
       createdAt: now,
       updatedAt: now,
     };
@@ -213,6 +250,180 @@ export const useSpaces = create<State>((set, get) => ({
         ? {
             ...space,
             agentPresets: createDefaultWorkstationAgentPresets(),
+            updatedAt: Date.now(),
+          }
+        : space,
+    );
+    set({ spaces });
+    void saveSpacesList(spaces);
+  },
+
+  setBrowserProfileMode: (workstationId, mode) => {
+    const current = get().spaces;
+    const workstation = current.find((space) => space.id === workstationId);
+    if (!workstation || workstation.browser.profileMode === mode) return;
+    const spaces = current.map((space) =>
+      space.id === workstationId
+        ? {
+            ...space,
+            browser: { ...space.browser, profileMode: mode },
+            updatedAt: Date.now(),
+          }
+        : space,
+    );
+    set({ spaces });
+    void saveSpacesList(spaces);
+  },
+
+  setBrowserOpenOnWorkstationLaunch: (workstationId, enabled) => {
+    const current = get().spaces;
+    const workstation = current.find((space) => space.id === workstationId);
+    if (
+      !workstation ||
+      workstation.browser.openOnWorkstationLaunch === enabled
+    ) {
+      return;
+    }
+    const spaces = current.map((space) =>
+      space.id === workstationId
+        ? {
+            ...space,
+            browser: { ...space.browser, openOnWorkstationLaunch: enabled },
+            updatedAt: Date.now(),
+          }
+        : space,
+    );
+    set({ spaces });
+    void saveSpacesList(spaces);
+  },
+
+  addBrowserTool: (workstationId, input) => {
+    const current = get().spaces;
+    const workstation = current.find((space) => space.id === workstationId);
+    if (!workstation) return null;
+    if (workstation.browser.tools.length >= MAX_BROWSER_TOOLS) {
+      throw new Error(
+        `A workstation can have at most ${MAX_BROWSER_TOOLS} website tools.`,
+      );
+    }
+    const validation = validateBrowserToolInput(input);
+    if (!validation.ok) throw new Error(validation.error);
+    let id = newBrowserToolId();
+    while (workstation.browser.tools.some((tool) => tool.id === id)) {
+      id = newBrowserToolId();
+    }
+    const tool: BrowserTool = { id, ...validation.tool };
+    const tools = [...workstation.browser.tools, tool];
+    if (browserToolUrlBytes(tools) > MAX_BROWSER_URL_TOTAL_BYTES) {
+      throw new Error("The combined website URLs are too long.");
+    }
+    const spaces = current.map((space) =>
+      space.id === workstationId
+        ? {
+            ...space,
+            browser: { ...space.browser, tools },
+            updatedAt: Date.now(),
+          }
+        : space,
+    );
+    set({ spaces });
+    void saveSpacesList(spaces);
+    return tool;
+  },
+
+  updateBrowserTool: (workstationId, toolId, update) => {
+    const current = get().spaces;
+    const workstation = current.find((space) => space.id === workstationId);
+    const existing = workstation?.browser.tools.find(
+      (tool) => tool.id === toolId,
+    );
+    if (!workstation || !existing) return;
+    const validation = validateBrowserToolInput({ ...existing, ...update });
+    if (!validation.ok) throw new Error(validation.error);
+    const tools = workstation.browser.tools.map((tool) =>
+      tool.id === toolId ? { id: tool.id, ...validation.tool } : tool,
+    );
+    if (browserToolUrlBytes(tools) > MAX_BROWSER_URL_TOTAL_BYTES) {
+      throw new Error("The combined website URLs are too long.");
+    }
+    const spaces = current.map((space) =>
+      space.id === workstationId
+        ? {
+            ...space,
+            browser: { ...space.browser, tools },
+            updatedAt: Date.now(),
+          }
+        : space,
+    );
+    set({ spaces });
+    void saveSpacesList(spaces);
+  },
+
+  removeBrowserTool: (workstationId, toolId) => {
+    const current = get().spaces;
+    const workstation = current.find((space) => space.id === workstationId);
+    if (!workstation?.browser.tools.some((tool) => tool.id === toolId)) return;
+    const tools = workstation.browser.tools.filter(
+      (tool) => tool.id !== toolId,
+    );
+    const spaces = current.map((space) =>
+      space.id === workstationId
+        ? {
+            ...space,
+            browser: { ...space.browser, tools },
+            updatedAt: Date.now(),
+          }
+        : space,
+    );
+    set({ spaces });
+    void saveSpacesList(spaces);
+  },
+
+  reorderBrowserTools: (workstationId, orderedIds) => {
+    const current = get().spaces;
+    const workstation = current.find((space) => space.id === workstationId);
+    if (!workstation) return;
+    const byId = new Map(
+      workstation.browser.tools.map((tool) => [tool.id, tool]),
+    );
+    const seen = new Set<string>();
+    const tools: BrowserTool[] = [];
+    for (const id of orderedIds) {
+      const tool = byId.get(id);
+      if (tool && !seen.has(id)) {
+        seen.add(id);
+        tools.push(tool);
+      }
+    }
+    for (const tool of workstation.browser.tools) {
+      if (!seen.has(tool.id)) tools.push(tool);
+    }
+    if (
+      tools.every((tool, index) => tool === workstation.browser.tools[index])
+    ) {
+      return;
+    }
+    const spaces = current.map((space) =>
+      space.id === workstationId
+        ? {
+            ...space,
+            browser: { ...space.browser, tools },
+            updatedAt: Date.now(),
+          }
+        : space,
+    );
+    set({ spaces });
+    void saveSpacesList(spaces);
+  },
+
+  resetBrowserTools: (workstationId) => {
+    const current = get().spaces;
+    if (!current.some((space) => space.id === workstationId)) return;
+    const spaces = current.map((space) =>
+      space.id === workstationId
+        ? {
+            ...space,
+            browser: { ...space.browser, tools: createDefaultBrowserTools() },
             updatedAt: Date.now(),
           }
         : space,

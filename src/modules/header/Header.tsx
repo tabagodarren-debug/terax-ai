@@ -3,6 +3,10 @@ import { WindowControls } from "@/components/WindowControls";
 import { IS_MAC, USE_CUSTOM_WINDOW_CONTROLS } from "@/lib/platform";
 import { NotificationBell } from "@/modules/agents";
 import type { AgentLaunchRequest } from "@/modules/agents/lib/launcher";
+import {
+  type BrowserToolLauncherProps,
+  BrowserToolsMenu,
+} from "@/modules/browser-tools";
 import type { AgentPresetMenuConfig, Tab } from "@/modules/tabs";
 import { TabBar } from "@/modules/tabs";
 import {
@@ -36,6 +40,7 @@ type Props = {
   onNewGitGraph: () => void;
   onLaunchAgents: (request: AgentLaunchRequest) => void;
   agentPresets: AgentPresetMenuConfig;
+  browserTools: BrowserToolLauncherProps;
   onClose: (id: number) => void;
   /** Chrome-style: close every tab to the right of the given tab. */
   onCloseTabsToRight: (id: number) => void;
@@ -72,6 +77,7 @@ export function Header({
   onNewGitGraph,
   onLaunchAgents,
   agentPresets,
+  browserTools,
   onClose,
   onCloseTabsToRight,
   onCloseOtherTabs,
@@ -189,6 +195,8 @@ export function Header({
       </div>
 
       <SearchInline ref={searchRef} target={searchTarget} compact={compact} />
+
+      <BrowserToolsMenu launcher={browserTools} />
 
       {IS_MAC && (
         <>

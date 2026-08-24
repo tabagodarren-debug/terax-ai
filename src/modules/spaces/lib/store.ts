@@ -2,6 +2,12 @@ import {
   normalizeWorkstationAgentPresets,
   type WorkstationAgentPreset,
 } from "@/modules/agents/lib/presets";
+import {
+  browserProfileIdForWorkstation,
+  hasCanonicalWorkstationBrowserState,
+  normalizeWorkstationBrowserState,
+} from "@/modules/browser-tools/lib/browserState";
+import type { WorkstationBrowserState } from "@/modules/browser-tools/lib/types";
 import type { WorkspaceEnv } from "@/modules/workspace";
 import { LazyStore } from "@tauri-apps/plugin-store";
 import type { SerializedTab } from "./serialize";
@@ -12,6 +18,7 @@ export type SpaceMeta = {
   root: string | null;
   env: WorkspaceEnv;
   agentPresets: WorkstationAgentPreset[];
+  browser: WorkstationBrowserState;
   /** Opt-in accent, index into SPACE_COLORS. Undefined = theme primary. */
   color?: number;
   createdAt: number;
@@ -23,7 +30,7 @@ export type SpaceState = {
   activeTabIndex: number;
 };
 
-export const SPACE_STORE_SCHEMA_VERSION = 2;
+export const SPACE_STORE_SCHEMA_VERSION = 3;
 
 const STORE_PATH = "terax-spaces.json";
 const KEY_SCHEMA_VERSION = "schemaVersion";
@@ -80,6 +87,10 @@ function migrateSpace(value: unknown): SpaceMeta | null {
     root: raw.root,
     env: raw.env,
     agentPresets: normalizeWorkstationAgentPresets(raw.agentPresets),
+    browser: normalizeWorkstationBrowserState(
+      raw.browser,
+      browserProfileIdForWorkstation(raw.id),
+    ),
     ...(typeof raw.color === "number" && Number.isInteger(raw.color)
       ? { color: raw.color }
       : {}),
@@ -123,11 +134,13 @@ export function migratePersistedSpaces(
 
   const seen = new Set<string>();
   const spaces: SpaceMeta[] = [];
+  const sources: Record<string, unknown>[] = [];
   for (const record of value) {
     const space = migrateSpace(record);
     if (!space || seen.has(space.id)) continue;
     seen.add(space.id);
     spaces.push(space);
+    sources.push(record as Record<string, unknown>);
   }
   return {
     spaces,
@@ -138,9 +151,12 @@ export function migratePersistedSpaces(
         spaces.some(
           (space, index) =>
             !hasCanonicalPresets(
-              (value[index] as Record<string, unknown> | undefined)
-                ?.agentPresets,
+              sources[index]?.agentPresets,
               space.agentPresets,
+            ) ||
+            !hasCanonicalWorkstationBrowserState(
+              sources[index]?.browser,
+              space.browser,
             ),
         )),
   };

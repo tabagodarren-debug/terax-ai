@@ -1,4 +1,5 @@
 import { createDefaultWorkstationAgentPresets } from "@/modules/agents/lib/presets";
+import { createDefaultWorkstationBrowserState } from "@/modules/browser-tools/lib/browserState";
 import type { WorkspaceEnv } from "@/modules/workspace";
 import { describe, expect, it } from "vitest";
 import { activeSpaceEnv, findActiveSpace, freshTabCwd } from "./activeSpace";
@@ -11,6 +12,7 @@ function space(over: Partial<SpaceMeta>): SpaceMeta {
     root: null,
     env: { kind: "local" },
     agentPresets: createDefaultWorkstationAgentPresets(),
+    browser: createDefaultWorkstationBrowserState("bp-active-space-test"),
     createdAt: 0,
     updatedAt: 0,
     ...over,

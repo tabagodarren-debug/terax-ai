@@ -544,11 +544,17 @@ You create production-ready image-to-video prompts for AI media tools.
 
 **Exit criterion:** each workstation launches the correct normal browser profile and saved websites, sign-ins persist, isolated profiles do not share sessions, and a manual upload/download workflow succeeds on a representative AI media site.
 
+**Implementation status:** complete on Windows. Manual signed-in session persistence, cross-workstation cookie isolation, and representative upload/download acceptance remain to be verified by the user.
+
 ### Phase 4: Daily-Driver Hardening
 
 - Crash recovery
 - Browser launch and profile-lock recovery
 - Confirmed Afflow browser-profile reset
+- Add macOS Chrome and Edge detection and native acceptance coverage
+- Add device-local root mappings for portable workstation metadata
+- Add opt-in synchronization through a user-selected cloud-synced folder
+- Sync workstation files and declarative configuration, never browser profiles, cookies, secrets, CLI authentication, executable paths, or live terminal state
 - Keyboard shortcuts
 - Unsaved file protection
 - Packaging and Windows installer
@@ -584,20 +590,20 @@ Saved → Researching → Scripting → Review → Generating → Editing → Re
 - [x] Add workstation scaffolding command
 - [x] Add default prompt templates
 - [x] Add configurable agent presets
-- [ ] Detect installed Chrome and Edge browsers
-- [ ] Add shared and per-workstation Afflow browser profiles
-- [ ] Add saved website launchers and structured browser launching
+- [x] Detect installed Chrome and Edge browsers
+- [x] Add shared and per-workstation Afflow browser profiles
+- [x] Add saved website launchers and structured browser launching
 - [x] Restore the last active workstation
 - [ ] Package a Windows development build
 
 ### P1 — Should Have
 
-- [ ] Browser and agent tool presets
+- [x] Browser and agent tool presets
 - [ ] Duplicate workstation
 - [ ] Drag file path into terminals
-- [ ] Browser executable override and validation
+- [x] Browser executable override and validation
 - [ ] Crash/unclean-shutdown recovery
-- [ ] Confirmed Afflow browser-profile reset
+- [x] Confirmed Afflow browser-profile reset
 - [ ] Config export/import without credentials
 - [ ] Keyboard shortcuts
 
@@ -662,13 +668,13 @@ The MVP is complete only when all of the following are true:
 - [x] Four named agent presets are available.
 - [x] Specialized agents reference their own configurable prompt files.
 - [x] At least one supported AI CLI can run in every agent terminal.
-- [ ] At least four configured websites can launch in a dedicated normal browser window.
-- [ ] Shared and per-workstation Afflow browser-profile modes are available.
+- [x] At least four configured websites can launch in a dedicated normal browser window.
+- [x] Shared and per-workstation Afflow browser-profile modes are available.
 - [ ] Sign-ins persist in the selected browser profile after Afflow and browser restarts.
 - [ ] Two isolated workstation profiles do not share cookies or login sessions.
 - [ ] File upload and download work on at least one representative AI media website in the launched browser.
-- [ ] The user's normal Chrome or Edge profile is never modified by Afflow.
-- [ ] No credentials are stored in workstation configuration files.
+- [x] The user's normal Chrome or Edge profile is never modified by Afflow.
+- [x] No credentials are stored in workstation configuration files.
 - [ ] A packaged Windows build completes one real affiliate-content workflow.
 
 ## 18. Architecture Decisions to Resolve Early

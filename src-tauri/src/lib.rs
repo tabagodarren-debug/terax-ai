@@ -1,8 +1,8 @@
 pub mod modules;
 
 use modules::{
-    agent, agent_presets, control, fs, git, history, lsp, net, pty, secrets, shell, vibrancy,
-    workspace, workstation,
+    agent, agent_presets, browser, control, fs, git, history, lsp, net, pty, secrets, shell,
+    vibrancy, workspace, workstation,
 };
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -228,6 +228,7 @@ pub fn run() {
             Ok(())
         })
         .manage(pty::PtyState::default())
+        .manage(browser::BrowserState::default())
         .manage(control_state)
         .manage(shell::ShellState::default())
         .manage(secrets::SecretsState::default())
@@ -314,6 +315,12 @@ pub fn run() {
             workstation::workstation_scaffold,
             workstation::resolve::workstation_resolve_file,
             agent_presets::agent_cli_detect,
+            browser::browser_detect,
+            browser::browser_validate_executable,
+            browser::browser_profile_status,
+            browser::browser_launch,
+            browser::browser_profile_open_folder,
+            browser::browser_profile_reset,
             control::control_frontend_ready,
             control::control_respond,
             get_launch_dir,

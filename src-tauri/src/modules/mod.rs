@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod agent_presets;
+pub mod browser;
 pub mod control;
 pub mod fs;
 pub mod git;

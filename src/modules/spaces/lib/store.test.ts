@@ -19,6 +19,10 @@ import {
   DEFAULT_WORKSTATION_AGENT_PRESETS,
 } from "@/modules/agents/lib/presets";
 import {
+  createDefaultWorkstationBrowserState,
+  isIsolatedBrowserProfileId,
+} from "@/modules/browser-tools/lib/browserState";
+import {
   deleteSpaceData,
   loadAll,
   migratePersistedSpaces,
@@ -38,31 +42,56 @@ const legacySpace = {
   updatedAt: 20,
 };
 
-const migratedLegacySpace = {
-  ...legacySpace,
-  agentPresets: createDefaultWorkstationAgentPresets(),
-};
-
 describe("migratePersistedSpaces", () => {
   it("migrates an unversioned record to four presets without changing metadata", () => {
     const result = migratePersistedSpaces([legacySpace], undefined);
 
-    expect(result).toEqual({ spaces: [migratedLegacySpace], needsWrite: true });
+    expect(result.needsWrite).toBe(true);
+    expect(result.spaces).toHaveLength(1);
+    expect(result.spaces[0]).toMatchObject({
+      ...legacySpace,
+      agentPresets: createDefaultWorkstationAgentPresets(),
+      browser: {
+        profileMode: "workstation",
+        openOnWorkstationLaunch: false,
+      },
+    });
+    expect(isIsolatedBrowserProfileId(result.spaces[0].browser.profileId)).toBe(
+      true,
+    );
   });
 
-  it("migrates a Phase 1 record and does not rewrite a current record", () => {
-    expect(migratePersistedSpaces([legacySpace], 1)).toEqual({
-      spaces: [migratedLegacySpace],
-      needsWrite: true,
-    });
+  it("migrates Phase 1 and 2 records and does not rewrite a current record", () => {
+    const phaseOne = migratePersistedSpaces([legacySpace], 1);
+    const phaseTwo = migratePersistedSpaces([legacySpace], 2);
+    const repeated = migratePersistedSpaces([legacySpace], 2);
+    const other = migratePersistedSpaces(
+      [{ ...legacySpace, id: "sp-other" }],
+      2,
+    );
+
+    expect(phaseOne.needsWrite).toBe(true);
+    expect(phaseTwo.needsWrite).toBe(true);
+    expect(repeated.spaces[0].browser.profileId).toBe(
+      phaseTwo.spaces[0].browser.profileId,
+    );
+    expect(other.spaces[0].browser.profileId).not.toBe(
+      phaseTwo.spaces[0].browser.profileId,
+    );
+
+    const currentSpace = {
+      ...legacySpace,
+      agentPresets: createDefaultWorkstationAgentPresets(),
+      browser: createDefaultWorkstationBrowserState("bp-existing"),
+    };
 
     const result = migratePersistedSpaces(
-      [migratedLegacySpace],
+      [currentSpace],
       SPACE_STORE_SCHEMA_VERSION,
     );
 
     expect(result).toEqual({
-      spaces: [migratedLegacySpace],
+      spaces: [currentSpace],
       needsWrite: false,
     });
   });
@@ -115,9 +144,87 @@ describe("migratePersistedSpaces", () => {
       [legacySpace],
       SPACE_STORE_SCHEMA_VERSION + 1,
     );
+    const repeated = migratePersistedSpaces(
+      [legacySpace],
+      SPACE_STORE_SCHEMA_VERSION + 1,
+    );
 
-    expect(result.spaces).toEqual([migratedLegacySpace]);
+    expect(result.spaces[0]).toMatchObject({
+      ...legacySpace,
+      agentPresets: createDefaultWorkstationAgentPresets(),
+      browser: { profileMode: "workstation" },
+    });
+    expect(repeated.spaces[0].browser.profileId).toBe(
+      result.spaces[0].browser.profileId,
+    );
     expect(result.needsWrite).toBe(false);
+  });
+
+  it("repairs malformed browser state while preserving Phase 2 fields", () => {
+    const result = migratePersistedSpaces(
+      [
+        {
+          ...legacySpace,
+          agentPresets: createDefaultWorkstationAgentPresets(),
+          browser: {
+            profileMode: "shared",
+            profileId: "shared-v1",
+            tools: [
+              { id: "local", name: " Local ", url: "http://localhost:3000" },
+              { id: "local", name: "Duplicate", url: "https://example.com" },
+              { id: "bad.id", name: "Bad", url: "file:///tmp" },
+            ],
+            openOnWorkstationLaunch: "yes",
+          },
+        },
+      ],
+      SPACE_STORE_SCHEMA_VERSION,
+    );
+
+    expect(result.needsWrite).toBe(true);
+    expect(result.spaces[0]).toMatchObject({
+      ...legacySpace,
+      agentPresets: createDefaultWorkstationAgentPresets(),
+      browser: {
+        profileMode: "shared",
+        tools: [{ id: "local", name: "Local", url: "http://localhost:3000/" }],
+        openOnWorkstationLaunch: false,
+      },
+    });
+    expect(isIsolatedBrowserProfileId(result.spaces[0].browser.profileId)).toBe(
+      true,
+    );
+  });
+
+  it("removes query and fragment data from persisted browser tools", () => {
+    const currentSpace = {
+      ...legacySpace,
+      agentPresets: createDefaultWorkstationAgentPresets(),
+      browser: {
+        ...createDefaultWorkstationBrowserState("bp-existing"),
+        tools: [
+          {
+            id: "sensitive-link",
+            name: "Sensitive link",
+            url: "https://example.com/tool?token=secret#result",
+          },
+        ],
+      },
+    };
+
+    const result = migratePersistedSpaces(
+      [currentSpace],
+      SPACE_STORE_SCHEMA_VERSION,
+    );
+
+    expect(result.needsWrite).toBe(true);
+    expect(result.spaces[0].browser.tools).toEqual([
+      {
+        id: "sensitive-link",
+        name: "Sensitive link",
+        url: "https://example.com/tool",
+      },
+    ]);
   });
 });
 
@@ -138,12 +245,14 @@ describe("loadAll", () => {
 
     const loaded = await loadAll();
 
-    expect(loaded.spaces).toEqual([migratedLegacySpace]);
+    expect(loaded.spaces[0]).toMatchObject({
+      ...legacySpace,
+      agentPresets: createDefaultWorkstationAgentPresets(),
+      browser: { profileMode: "workstation" },
+    });
     expect(loaded.activeId).toBe(legacySpace.id);
     expect(loaded.states.get(legacySpace.id)).toBe(snapshot);
-    expect(storeMock.set).toHaveBeenNthCalledWith(1, "spaces", [
-      migratedLegacySpace,
-    ]);
+    expect(storeMock.set).toHaveBeenNthCalledWith(1, "spaces", loaded.spaces);
     expect(storeMock.set).toHaveBeenNthCalledWith(
       2,
       "schemaVersion",
@@ -159,7 +268,11 @@ describe("loadAll", () => {
 
     const loaded = await loadAll();
 
-    expect(loaded.spaces).toEqual([migratedLegacySpace]);
+    expect(loaded.spaces[0]).toMatchObject({
+      ...legacySpace,
+      agentPresets: createDefaultWorkstationAgentPresets(),
+      browser: { profileMode: "workstation" },
+    });
     await saveSpacesList(loaded.spaces);
     await saveActiveId(legacySpace.id);
     await saveState(legacySpace.id, { tabs: [], activeTabIndex: 0 });
