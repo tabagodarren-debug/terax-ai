@@ -89,6 +89,7 @@ export function useSpacesBoot({
           activeId && spaces.some((s) => s.id === activeId)
             ? activeId
             : spaces[0].id;
+        if (active !== activeId) await saveActiveId(active);
         setActiveSpaceForNewTabs(active);
 
         // Apply the space's env+home before the fresh-tab fallback and spawns

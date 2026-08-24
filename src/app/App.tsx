@@ -50,9 +50,9 @@ import { openSettingsWindow } from "@/modules/settings/openSettingsWindow";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { setShowHidden } from "@/modules/settings/store";
 import {
-  shouldDisablePaneSwapShortcut,
   type ShortcutHandlers,
   type ShortcutId,
+  shouldDisablePaneSwapShortcut,
   useGlobalShortcuts,
 } from "@/modules/shortcuts";
 import {
@@ -67,15 +67,21 @@ import {
   useSourceControlContext,
 } from "@/modules/source-control";
 import {
+  findWorkstationByRoot,
+  newWorkstationId,
   SpaceSwitcher,
+  scaffoldWorkstation,
   useSpacePersistence,
   useSpaces,
   useSpacesBoot,
+  WorkstationSidebar,
+  workstationNameFromRoot,
 } from "@/modules/spaces";
+import { accentFor } from "@/modules/spaces/lib/spaceColor";
 import { StatusBar } from "@/modules/statusbar";
 import {
-  TabSwitcherHud,
   type CloseTabsPlan,
+  TabSwitcherHud,
   useTabSwitcher,
   useTabs,
   useWindowTitle,
@@ -87,10 +93,11 @@ import {
   disposeSession,
   findLeafCwd,
   hasLeaf,
+  leafHasForegroundProcess,
   leafIds,
   navigateFocusedBlocks,
-  ptyIdForLeaf,
   type PaneBounds,
+  ptyIdForLeaf,
   type TerminalPaneHandle,
   useAgentActivityStore,
   useTerminalFileDrop,
@@ -104,12 +111,13 @@ import {
 } from "@/modules/theme";
 import {
   useWorkspaceEnvStore,
-  workspaceScopeKey,
   type WorkspaceEnv,
+  workspaceScopeKey,
 } from "@/modules/workspace";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { open as openDirectory } from "@tauri-apps/plugin-dialog";
 import type { SearchAddon } from "@xterm/addon-search";
 import {
   useCallback,
@@ -119,6 +127,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { toast } from "sonner";
 import { CloseDialogs } from "./components/CloseDialogs";
 import {
   TOGGLE_BLOCK_INPUT_EVENT,
@@ -232,7 +241,33 @@ export default function App() {
   });
 
   const activeSpaceId = useSpaces((s) => s.activeId);
+  const workstations = useSpaces((s) => s.spaces);
   const spacesHydrated = useSpaces((s) => s.hydrated);
+  const activeWorkstation = useMemo(
+    () =>
+      workstations.find((workstation) => workstation.id === activeSpaceId) ??
+      workstations[0] ??
+      null,
+    [activeSpaceId, workstations],
+  );
+  const workstationSidebarItems = useMemo(
+    () =>
+      workstations.map((workstation) => ({
+        id: workstation.id,
+        name: workstation.name,
+        root: workstation.root ?? "",
+        color: accentFor(workstation),
+        unavailable: workstation.root === null,
+        unavailableReason:
+          workstation.root === null ? "No folder is configured" : undefined,
+        archiveDisabled: workstations.length <= 1,
+        archiveDisabledReason:
+          workstations.length <= 1
+            ? "At least one workstation is required"
+            : undefined,
+      })),
+    [workstations],
+  );
   const activeSpaceIdRef = useRef(activeSpaceId);
   useLayoutEffect(() => {
     tabsRef.current = tabs;
@@ -349,11 +384,12 @@ export default function App() {
   useEditorFileSync({ tabs, tabsRef, editorRefs });
   useThemeFileEditing({ tabsRef, openFileTab });
 
-  const { explorerRoot, inheritedCwdForNewTab } = useWorkspaceCwd(
+  const { explorerRoot, inheritedCwdForNewTab } = useWorkspaceCwd({
+    workstationId: activeWorkstation?.id ?? null,
+    workstationRoot: activeWorkstation?.root,
     activeTab,
-    tabs,
-    launchCwd ?? home,
-  );
+    fallbackRoot: launchCwd ?? home,
+  });
 
   useWindowTitle(activeTab, explorerRoot);
 
@@ -1135,22 +1171,130 @@ export default function App() {
 
   const activeCwd = activeTerminalLeafCwd;
 
-  const handleNewSpace = useCallback(() => {
-    const { spaces, create, setActive } = useSpaces.getState();
-    const meta = create({
-      name: `Space ${spaces.length + 1}`,
-      root: activeCwd ?? home ?? null,
-      env: workspaceEnv,
-    });
-    setActiveSpaceForNewTabs(meta.id);
-    newTab(activeCwd ?? undefined);
-    setActive(meta.id);
-    return meta.id;
-  }, [activeCwd, home, workspaceEnv, newTab, setActiveSpaceForNewTabs]);
+  const registerWorkstation = useCallback(
+    async (id: string, name: string, root: string) => {
+      const canonicalRoot = await native.workspaceAuthorize(root);
+      const existingId = findWorkstationByRoot(
+        useSpaces.getState().spaces,
+        canonicalRoot,
+      );
+      if (existingId) {
+        useSpaces.getState().setActive(existingId);
+        toast.info("Workstation is already open");
+        return existingId;
+      }
 
-  const handleDeleteSpace = useCallback(
-    (id: string) => {
-      const nextSpaceId = useSpaces.getState().remove(id);
+      const meta = useSpaces.getState().create({
+        id,
+        name,
+        root: canonicalRoot,
+        env: { kind: "local" },
+      });
+      setActiveSpaceForNewTabs(meta.id);
+      const tabId = newTabInSpace(meta.id, canonicalRoot);
+      useSpaces.getState().setActive(meta.id);
+      setActiveId(tabId);
+      return meta.id;
+    },
+    [newTabInSpace, setActiveId, setActiveSpaceForNewTabs],
+  );
+
+  const chooseWorkstationDirectory = useCallback(
+    async (title: string): Promise<string | null> => {
+      const selected = await openDirectory({
+        directory: true,
+        multiple: false,
+        title,
+      });
+      return typeof selected === "string" ? selected : null;
+    },
+    [],
+  );
+
+  const handleCreateWorkstation = useCallback(async () => {
+    try {
+      const selected = await chooseWorkstationDirectory(
+        "Choose a folder for the new workstation",
+      );
+      if (!selected) return;
+      const canonicalRoot = await native.workspaceAuthorize(selected);
+      const existingId = findWorkstationByRoot(
+        useSpaces.getState().spaces,
+        canonicalRoot,
+      );
+      if (existingId) {
+        useSpaces.getState().setActive(existingId);
+        toast.info("Workstation is already open");
+        return;
+      }
+
+      const id = newWorkstationId();
+      const name = workstationNameFromRoot(canonicalRoot);
+      const report = await scaffoldWorkstation({
+        rootPath: canonicalRoot,
+        workstationId: id,
+        name,
+      });
+      await registerWorkstation(id, name, report.root);
+      toast.success("Workstation created", {
+        description: name,
+      });
+    } catch (error) {
+      toast.error("Could not create workstation", {
+        description: String(error),
+      });
+    }
+  }, [chooseWorkstationDirectory, registerWorkstation]);
+
+  const handleOpenExistingWorkstation = useCallback(async () => {
+    try {
+      const selected = await chooseWorkstationDirectory(
+        "Open folder as workstation",
+      );
+      if (!selected) return;
+      await registerWorkstation(
+        newWorkstationId(),
+        workstationNameFromRoot(selected),
+        selected,
+      );
+    } catch (error) {
+      toast.error("Could not open workstation", {
+        description: String(error),
+      });
+    }
+  }, [chooseWorkstationDirectory, registerWorkstation]);
+
+  const handleArchiveWorkstation = useCallback(
+    async (id: string) => {
+      const affected = () =>
+        tabsRef.current.filter((tab) => tab.spaceId === id);
+      const dirty = affected().filter(
+        (tab) => tab.kind === "editor" && tab.dirty,
+      );
+      if (dirty.length > 0) {
+        toast.warning("Save or close edited files before archiving", {
+          description: "Afflow will not discard unsaved workstation changes.",
+        });
+        return;
+      }
+
+      if (usePreferencesStore.getState().confirmCloseRunningTerminal) {
+        const terminalLeafIds = affected()
+          .filter((tab) => tab.kind === "terminal")
+          .flatMap((tab) => leafIds(tab.paneTree));
+        const running = await Promise.all(
+          terminalLeafIds.map(leafHasForegroundProcess),
+        );
+        if (running.some(Boolean)) {
+          toast.warning("Stop running processes before archiving", {
+            description:
+              "Afflow will not terminate active workstation processes silently.",
+          });
+          return;
+        }
+      }
+
+      const nextSpaceId = useSpaces.getState().archive(id);
       if (!nextSpaceId) return;
       const root = useSpaces
         .getState()
@@ -1205,8 +1349,8 @@ export default function App() {
       open={switcherOpen}
       onOpenChange={setSwitcherOpen}
       tabs={tabs}
-      onNewSpace={() => void handleNewSpace()}
-      onDeleteSpace={handleDeleteSpace}
+      onNewSpace={() => void handleCreateWorkstation()}
+      onDeleteSpace={(id) => void handleArchiveWorkstation(id)}
       onNewTabInSpace={handleNewTabInSpace}
       onJumpTab={jumpToTab}
       onCloseTab={handleClose}
@@ -1246,7 +1390,7 @@ export default function App() {
             spaces: useSpaces.getState().spaces,
             activeSpaceId,
             openSpacesOverview: () => setSwitcherOpen(true),
-            newSpace: () => void handleNewSpace(),
+            newSpace: () => void handleCreateWorkstation(),
             switchSpace: (id) => useSpaces.getState().setActive(id),
           })
         : [],
@@ -1270,7 +1414,7 @@ export default function App() {
       togglePanelAndFocus,
       askFromSelection,
       activeSpaceId,
-      handleNewSpace,
+      handleCreateWorkstation,
     ],
   );
 
@@ -1400,6 +1544,40 @@ export default function App() {
               }}
             >
               <ResizablePanel
+                id="workstations"
+                defaultSize="184px"
+                minSize="152px"
+                maxSize="260px"
+              >
+                <div className="h-full min-h-0 pl-2 pr-0.5">
+                  <div className="terax-pane h-full min-h-0 overflow-hidden">
+                    <WorkstationSidebar
+                      className="w-full border-r-0 bg-transparent"
+                      workstations={workstationSidebarItems}
+                      activeId={activeSpaceId}
+                      loading={!spacesHydrated}
+                      onOpenWorkstation={(id) =>
+                        useSpaces.getState().setActive(id)
+                      }
+                      onCreateWorkstation={() => void handleCreateWorkstation()}
+                      onOpenExistingWorkstation={() =>
+                        void handleOpenExistingWorkstation()
+                      }
+                      onRenameWorkstation={(id, name) =>
+                        useSpaces.getState().rename(id, name)
+                      }
+                      onReorderWorkstations={(ids) =>
+                        useSpaces.getState().reorder(ids)
+                      }
+                      onArchiveWorkstation={(id) =>
+                        void handleArchiveWorkstation(id)
+                      }
+                    />
+                  </div>
+                </div>
+              </ResizablePanel>
+              <ResizableHandle className="w-1 rounded-full bg-transparent transition-colors duration-[var(--dur-fast)] after:w-4 hover:bg-border" />
+              <ResizablePanel
                 id="sidebar"
                 panelRef={sidebarRef}
                 defaultSize={
@@ -1464,7 +1642,7 @@ export default function App() {
                 </div>
               </ResizablePanel>
               <ResizableHandle className="w-1 rounded-full bg-transparent transition-colors duration-[var(--dur-fast)] after:w-4 hover:bg-border" />
-              <ResizablePanel id="workspace" defaultSize="78%" minSize="30%">
+              <ResizablePanel id="workspace" defaultSize="58%" minSize="30%">
                 <div className="h-full min-h-0 pl-0.5 pr-2">
                   <div className="terax-pane flex h-full min-h-0 flex-col">
                     <div className="relative min-h-0 flex-1">

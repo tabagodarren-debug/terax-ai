@@ -576,18 +576,18 @@ Saved → Researching → Scripting → Review → Generating → Editing → Re
 
 ### P0 — Must Have
 
-- [ ] Fork and run the base project
-- [ ] Rename app and package identifiers safely
-- [ ] Locate and document tab, pane, PTY, file, preview, and state modules
-- [ ] Add workstation schema and persistence
-- [ ] Add workstation switcher/sidebar
-- [ ] Add workstation scaffolding command
-- [ ] Add default prompt templates
+- [x] Fork and run the base project
+- [x] Rename app and package identifiers safely
+- [x] Locate and document tab, pane, PTY, file, preview, and state modules
+- [x] Add workstation schema and persistence
+- [x] Add workstation switcher/sidebar
+- [x] Add workstation scaffolding command
+- [x] Add default prompt templates
 - [ ] Add configurable agent presets
 - [ ] Detect installed Chrome and Edge browsers
 - [ ] Add shared and per-workstation Afflow browser profiles
 - [ ] Add saved website launchers and structured browser launching
-- [ ] Restore the last active workstation
+- [x] Restore the last active workstation
 - [ ] Package a Windows development build
 
 ### P1 — Should Have

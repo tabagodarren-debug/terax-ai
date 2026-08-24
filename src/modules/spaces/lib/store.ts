@@ -1,5 +1,5 @@
-import { LazyStore } from "@tauri-apps/plugin-store";
 import type { WorkspaceEnv } from "@/modules/workspace";
+import { LazyStore } from "@tauri-apps/plugin-store";
 import type { SerializedTab } from "./serialize";
 
 export type SpaceMeta = {
@@ -18,7 +18,10 @@ export type SpaceState = {
   activeTabIndex: number;
 };
 
+export const SPACE_STORE_SCHEMA_VERSION = 1;
+
 const STORE_PATH = "terax-spaces.json";
+const KEY_SCHEMA_VERSION = "schemaVersion";
 const KEY_SPACES = "spaces";
 const KEY_ACTIVE = "activeId";
 const STATE_PREFIX = "state:";
@@ -32,23 +35,107 @@ export type LoadedSpaces = {
   states: Map<string, SpaceState>;
 };
 
+type MigrationResult = {
+  spaces: SpaceMeta[];
+  needsWrite: boolean;
+};
+
+function isWorkspaceEnv(value: unknown): value is WorkspaceEnv {
+  if (!value || typeof value !== "object") return false;
+  const env = value as Record<string, unknown>;
+  return (
+    env.kind === "local" ||
+    (env.kind === "wsl" &&
+      typeof env.distro === "string" &&
+      env.distro.length > 0)
+  );
+}
+
+function migrateSpace(value: unknown): SpaceMeta | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  if (
+    typeof raw.id !== "string" ||
+    raw.id.length === 0 ||
+    typeof raw.name !== "string" ||
+    raw.name.length === 0 ||
+    (raw.root !== null && typeof raw.root !== "string") ||
+    !isWorkspaceEnv(raw.env) ||
+    typeof raw.createdAt !== "number" ||
+    !Number.isFinite(raw.createdAt) ||
+    typeof raw.updatedAt !== "number" ||
+    !Number.isFinite(raw.updatedAt)
+  ) {
+    return null;
+  }
+  return {
+    id: raw.id,
+    name: raw.name,
+    root: raw.root,
+    env: raw.env,
+    ...(typeof raw.color === "number" && Number.isInteger(raw.color)
+      ? { color: raw.color }
+      : {}),
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt,
+  };
+}
+
+export function migratePersistedSpaces(
+  value: unknown,
+  storedVersion: unknown,
+): MigrationResult {
+  const canWrite =
+    typeof storedVersion !== "number" ||
+    storedVersion <= SPACE_STORE_SCHEMA_VERSION;
+  if (!Array.isArray(value)) {
+    return {
+      spaces: [],
+      needsWrite: canWrite && storedVersion !== SPACE_STORE_SCHEMA_VERSION,
+    };
+  }
+
+  const seen = new Set<string>();
+  const spaces: SpaceMeta[] = [];
+  for (const record of value) {
+    const space = migrateSpace(record);
+    if (!space || seen.has(space.id)) continue;
+    seen.add(space.id);
+    spaces.push(space);
+  }
+  return {
+    spaces,
+    needsWrite:
+      canWrite &&
+      (storedVersion !== SPACE_STORE_SCHEMA_VERSION ||
+        spaces.length !== value.length),
+  };
+}
+
 export async function loadAll(): Promise<LoadedSpaces> {
   const entries = await store.entries();
-  let spaces: SpaceMeta[] = [];
+  let rawSpaces: unknown = [];
+  let storedVersion: unknown;
   let activeId: string | null = null;
   const states = new Map<string, SpaceState>();
   for (const [k, v] of entries) {
-    if (k === KEY_SPACES) spaces = (v as SpaceMeta[]) ?? [];
-    else if (k === KEY_ACTIVE) activeId = (v as string | null) ?? null;
+    if (k === KEY_SCHEMA_VERSION) storedVersion = v;
+    else if (k === KEY_SPACES) rawSpaces = v;
+    else if (k === KEY_ACTIVE) activeId = typeof v === "string" ? v : null;
     else if (k.startsWith(STATE_PREFIX)) {
       states.set(k.slice(STATE_PREFIX.length), v as SpaceState);
     }
   }
-  return { spaces, activeId, states };
+  const migrated = migratePersistedSpaces(rawSpaces, storedVersion);
+  if (migrated.needsWrite) {
+    await saveSpacesList(migrated.spaces);
+  }
+  return { spaces: migrated.spaces, activeId, states };
 }
 
 export async function saveSpacesList(spaces: SpaceMeta[]): Promise<void> {
   await store.set(KEY_SPACES, spaces);
+  await store.set(KEY_SCHEMA_VERSION, SPACE_STORE_SCHEMA_VERSION);
 }
 
 export async function saveActiveId(id: string | null): Promise<void> {

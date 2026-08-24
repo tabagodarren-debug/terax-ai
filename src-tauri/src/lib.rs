@@ -2,6 +2,7 @@ pub mod modules;
 
 use modules::{
     agent, control, fs, git, history, lsp, net, pty, secrets, shell, vibrancy, workspace,
+    workstation,
 };
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -184,6 +185,7 @@ pub fn run() {
     #[cfg(target_os = "linux")]
     let builder = builder.plugin(tauri_plugin_clipboard_manager::init());
     builder
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         // Skip restoring VISIBLE — frontend calls window.show() after first
         // paint so the user never sees a transparent window-shadow flash on
@@ -309,6 +311,7 @@ pub fn run() {
             workspace::wsl_home,
             workspace::workspace_authorize,
             workspace::workspace_current_dir,
+            workstation::workstation_scaffold,
             control::control_frontend_ready,
             control::control_respond,
             get_launch_dir,

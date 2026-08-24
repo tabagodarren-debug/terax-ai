@@ -11,3 +11,4 @@ pub mod secrets;
 pub mod shell;
 pub mod vibrancy;
 pub mod workspace;
+pub mod workstation;

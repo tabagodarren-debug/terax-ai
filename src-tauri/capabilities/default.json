@@ -20,6 +20,7 @@
     "core:window:allow-set-title",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
+    "dialog:allow-open",
     "opener:default",
     "log:default",
     "os:default",
