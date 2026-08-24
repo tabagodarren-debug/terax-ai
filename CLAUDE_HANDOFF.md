@@ -1,309 +1,450 @@
-# Claude Handoff: Afflow Phase 1
+# Claude Handoff: Afflow Phase 2
 
 ## Purpose
 
-This document brings a Claude coding agent from zero context to the current
-Afflow baseline and defines how it can contribute to Phase 1 without colliding
-with other agents working in the same repository.
-
-Read these files before making changes, in this order:
-
-1. `AGENTS.md`
-2. `TERAX.md`
-3. `PROJECT.md`
-4. `docs/architecture-baseline.md`
-5. This handoff
-
-`TERAX.md` contains inherited architecture and engineering invariants.
-`PROJECT.md` defines the Afflow product and roadmap. Where upstream Terax names
-remain in code, treat them as compatibility-sensitive internal identifiers
-unless a task explicitly includes a tested migration.
+This document gives Claude the exact context, ownership boundary, contracts,
+and verification requirements for Afflow Phase 2. The checkout is shared with
+Codex agents. Do not edit outside the assigned files and do not commit.
 
 ## Repository State
 
-- Repository: `https://github.com/tabagodarren-debug/terax-ai`
-- Upstream base: Terax `0.8.6`, commit
-  `468fd7fcc48aef4af85a2ff8c46d0c8058d17c25`
-- Completed Afflow baseline: commit `266c569`
-- Current completed branch: `afflow/phase-0`
-- Phase 0 branch is pushed to `origin/afflow/phase-0`
-- Expected Phase 1 branch: `afflow/phase-1-workstations`
-- Stack: Tauri 2, Rust, React 19, TypeScript, Zustand, xterm.js,
-  CodeMirror, Vitest, pnpm
-- Windows development environment: Node 24, pnpm 11.9, Rust 1.98,
-  Visual Studio Build Tools 2022
+- Repository: `C:\Users\Admin\Afflow`
+- Phase 2 branch: `afflow/phase-2-agent-presets`
+- Phase 1 implementation commit: `82c2fa9`
+- Phase 1 handoff commit: `5b27093`
+- Phase 0 baseline commit: `266c569`
+- Package manager: pnpm only
+- Frontend: React 19 and TypeScript
+- Native app: Tauri 2 and Rust
+- Current Phase 1 state: workstations are implemented, verified, committed,
+  and pushed.
+- Shared checkout rule: other agents may modify unrelated files while Claude
+  works. Do not revert, reformat, stage, commit, or clean their changes.
 
-At the start of every task, run:
+Read these files before editing:
 
-```powershell
-git status --short --branch
-git log -1 --oneline
-```
+1. `AGENTS.md`
+2. `TERAX.md`
+3. `PROJECT.md`, especially sections 8.4, 8.5, 9, 10, 11, and Phase 2
+4. This file
 
-If Git reports dubious ownership in this environment, use the command-scoped
-form below rather than changing repository history:
+## Phase 2 Product Scope
 
-```powershell
-git -c safe.directory=C:/Users/Admin/Afflow status --short --branch
-```
+Phase 2 is Agent Presets:
 
-Do not reset, revert, overwrite, or reformat changes made by another agent.
-This is a shared working directory.
+- Add four workstation workflow roles:
+  - General Agent
+  - Script Generator
+  - Script Reviewer
+  - Image-to-Video Prompt Generator
+- Keep workflow roles separate from CLI brands.
+- Allow a role to use Claude Code, Codex CLI, Gemini CLI, OpenCode, or a
+  validated custom command.
+- Start every role terminal at the active workstation root.
+- Expose the three scaffolded `prompt.md` files.
+- Provide a one-click Copy startup instruction action instead of fragile
+  automatic prompt injection.
+- Allow secure one-click opening of referenced output files.
 
-## What Phase 0 Completed
+Phase 2 exit criterion:
 
-Phase 0 established a buildable Afflow fork while deliberately retaining
-upstream protocol identifiers that would be expensive and risky to migrate.
+> All four presets launch successfully using at least one installed CLI.
 
-- Renamed the product and primary desktop package to Afflow.
-- Set the frontend package name to `afflow`, version `0.1.0`.
-- Set the Rust desktop package and executable to `afflow` / `afflow.exe`.
-- Set the Tauri product name to `Afflow` and application identifier to
-  `app.afflow.desktop`.
-- Updated visible application copy, metadata, installer details, and window
-  titles for Afflow.
-- Disabled the inherited Terax updater path because Afflow has no signed
-  release feed yet.
-- Preserved Apache-2.0 licensing and added `NOTICE` attribution for Terax.
-- Added the complete product plan in `PROJECT.md`.
-- Added the inherited-system map and Phase 1 guidance in
-  `docs/architecture-baseline.md`.
-- Verified the renamed native Windows app launches.
+## Frozen Architecture Decisions
 
-The following internal names intentionally remain and must not be bulk-renamed:
+These decisions are approved. Do not reopen them unless the current code makes
+one impossible.
 
-- `terax-cli` and `terax-control-protocol`
-- Rust library name `terax_lib`
-- IPC event names and OSC/shell integration tokens
-- keychain service and persisted store keys
-- CSS hooks and compatibility-facing identifiers
+1. A workflow role is not a CLI brand.
+   - Role IDs are `general`, `script-generator`, `script-reviewer`, and
+     `video-prompt`.
+   - Existing CLI launcher IDs and notification hooks remain intact.
+   - Do not rename or repurpose `AGENT_LAUNCHERS`.
 
-Phase 0 verification completed successfully:
+2. Workstation presets are mutable workstation state.
+   - They will live in the versioned Spaces store.
+   - They will not be written to `workstation.json`.
+   - Prompt contents remain normal files on disk.
 
-- Frontend type checking
-- Frontend production build
-- 685 frontend tests
-- 303 Rust tests
-- Strict Rust Clippy with warnings denied
-- Native Tauri development launch on Windows
+3. The working directory is derived at launch time.
+   - It is always the active workstation root.
+   - It is not persisted in each preset.
+   - It must not inherit a terminal's nested current directory.
 
-## Product Decisions Already Made
+4. Prompt paths are fixed root-relative paths:
+   - `agents/script-generator/prompt.md`
+   - `agents/script-reviewer/prompt.md`
+   - `agents/video-prompt/prompt.md`
+   - General Agent has no prompt file.
 
-- Afflow is an executable Tauri desktop application, not a web-only product.
-- V1 does not include an embedded general-purpose browser.
-- Website tools will launch in a normal installed Chrome or Edge window.
-- Browser profiles and website launchers are Phase 3, not Phase 1.
-- A workstation is a saved production context. It is distinct from the
-  existing Local/WSL execution `workspace` concept.
-- Existing Terax Spaces are the foundation for Afflow workstations. Do not add
-  a second store that competes for active context, tab ownership, or restore
-  behavior.
+5. No automatic prompt injection.
+   - PTY readiness only means the shell is ready.
+   - It does not mean a Claude, Codex, Gemini, or OpenCode TUI is ready.
+   - Never concatenate a prompt path or prompt text into a shell command.
+   - The frontend will expose Open prompt and Copy startup instruction.
 
-## Phase 1 Scope
+6. Phase 2 is Local-only, matching Phase 1 workstation creation.
+   - Do not expand this assignment to WSL.
 
-Phase 1 is Workstations and File Templates:
+7. Phase 3 browser launchers and profiles are out of scope.
 
-- Add a persistent workstation sidebar.
-- Add create, open, rename, reorder, and archive actions.
-- Add a versioned workstation schema and migrate existing Space records.
-- Restore the last active workstation on startup.
-- Scaffold the default folder and prompt structure.
-- Save and restore workstation layout and tab state.
-- Change the file explorer root when the active workstation changes.
-- Preserve live terminal, editor, and preview state across switches.
+## Existing Architecture To Reuse
 
-Phase 1 exit criterion:
+### CLI launchers
 
-> Switching workstations changes the file tree and restores the correct layout
-> without losing state.
+`src/modules/agents/lib/launcher.ts` already owns:
 
-Do not implement Phase 2 agent presets or Phase 3 browser profiles during this
-phase unless the lead explicitly changes scope.
+- `AGENT_LAUNCHERS`
+- `AgentLauncherId`
+- `AgentLaunchRequest`
+- global per-CLI start commands
+- command validation
+- one-to-four-pane terminal plans
 
-## Default Workstation Scaffold
+Existing launchers include Claude, Codex, Gemini, Pi, OpenCode, and Grok.
+Do not remove Pi or Grok compatibility even though the Phase 2 product surface
+focuses on Claude, Codex, Gemini, OpenCode, and Custom.
+
+### Agent terminal launch
+
+`src/app/App.tsx` owns `launchAgentGroup`. It creates terminal panes, enables
+the real CLI's notification hooks, waits for shell readiness, and writes the
+validated CLI command followed by carriage return.
+
+`src/modules/tabs/lib/useTabs.ts` owns `newAgentGroupTab` and `newAgentTab`.
+
+No new PTY spawn command is required for Phase 2.
+
+### Workstations
+
+`src/modules/spaces/lib/store.ts` owns the versioned workstation metadata.
+`src/modules/spaces/lib/useSpaces.ts` owns workstation mutations.
+
+The Phase 1 Rust scaffold is under:
+
+- `src-tauri/src/modules/workstation/mod.rs`
+- `src-tauri/src/modules/workstation/scaffold.rs`
+- `src-tauri/src/modules/workstation/template.rs`
+
+`workstation.json` deliberately contains only identity and creation metadata.
+
+### File opening
+
+The frontend already opens files through the tab system in `App.tsx`.
+Markdown files can open in the rendered Markdown surface. The Rust control
+bridge already demonstrates canonical, authorized regular-file validation.
+
+### Executable lookup
+
+`src-tauri/src/modules/lsp/env.rs` already resolves binaries using the captured
+login-shell PATH on Unix and the inherited user PATH on Windows. Reuse or
+narrowly expose this implementation. Do not create a second PATH-capture
+system and do not execute a shell to detect CLIs.
+
+## Claude Assignment
+
+Claude owns the native support needed by the Phase 2 frontend:
+
+1. Detect the four supported default CLI executables.
+2. Resolve prompt and output-file references safely inside a workstation.
+3. Add focused Rust tests for both commands.
+
+This is a Rust-only assignment. Do not edit frontend files.
+
+## Command 1: Agent CLI Detection
+
+Add a Tauri command:
 
 ```text
-<workstation>/
-|-- agents/
-|   |-- script-generator/
-|   |   `-- prompt.md
-|   |-- script-reviewer/
-|   |   `-- prompt.md
-|   `-- video-prompt/
-|       `-- prompt.md
-|-- products/
-|-- references/
-|-- research/
-|-- scripts/
-|-- images/
-|-- audio/
-|-- videos/
-|-- outputs/
-`-- workstation.json
+agent_cli_detect() -> AgentCliDetection[]
 ```
 
-The canonical starter prompt contents are in `PROJECT.md`, section 11. Do not
-invent shortened alternatives. Prompt templates are regular project files, not
-secrets and not application credentials.
+Return entries in this stable order:
 
-## Existing Architecture to Extend
+1. `claude` using executable `claude`
+2. `codex` using executable `codex`
+3. `gemini` using executable `gemini`
+4. `opencode` using executable `opencode`
 
-Use these existing owners instead of creating parallel systems:
+JSON shape:
 
-- `src/modules/spaces/lib/store.ts`: `SpaceMeta` persistence model.
-- `src/modules/spaces/lib/useSpaces.ts`: ordered spaces, active space, actions,
-  and hydration state.
-- `src/modules/spaces/SpaceSwitcher.tsx`: current create, switch, rename,
-  delete, reorder, tab-group, and tab-move UI.
-- `src/modules/spaces/lib/serialize.ts`: persisted tab and space snapshots.
-- `src/modules/spaces/lib/useSpacesBoot.ts`: startup restoration.
-- `src/modules/spaces/lib/useSpacePersistence.ts`: persistence updates.
-- `src/modules/tabs/lib/useTabs.ts`: tab source of truth and `spaceId`
-  ownership.
-- `src/modules/tabs/lib/useWorkspaceCwd.ts`: currently couples dynamic terminal
-  cwd and explorer root.
-- `src/app/App.tsx`: composition and cross-module coordination.
-- `src/app/components/WorkspaceSurface.tsx`: keeps inactive surfaces mounted so
-  live state survives switching.
-- `src-tauri/src/lib.rs`: Tauri command registration.
-- `src-tauri/src/modules/fs/`: native filesystem operations and validation
-  patterns.
-- `src-tauri/src/modules/workspace.rs`: Local/WSL execution authorization. This
-  is not the Afflow workstation model.
+```json
+{
+  "id": "claude",
+  "command": "claude",
+  "available": true,
+  "resolvedPath": "C:/absolute/path/to/claude.exe"
+}
+```
 
-The intended Phase 1 architecture is:
+Requirements:
 
-1. Evolve `SpaceMeta` into the workstation record with explicit schema
-   versioning and migration.
-2. Preserve stable IDs, current tab ownership, and serialized snapshots.
-3. Source the explorer root from the active workstation's stable root.
-4. Keep terminal cwd dynamic for shell navigation and new-terminal inheritance.
-5. Switch visibility by existing `spaceId`; do not unmount or dispose inactive
-   workstation sessions.
-6. Archive or remove only metadata and tab state. Never delete the external
-   root directory.
+- `id` and `command` are stable lowercase strings.
+- `resolvedPath` is a canonical frontend path with forward slashes, or `null`.
+- `available` is exactly `resolvedPath !== null`.
+- Use the existing login-shell/user PATH resolution behavior.
+- Run potentially blocking lookup work through `spawn_blocking`.
+- Do not launch a CLI, run `--version`, source shell aliases, or inspect CLI
+  authentication state.
+- Custom commands are frontend configuration and are not detected here.
+- Do not add a new dependency.
 
-## Recommended Claude Assignment
+## Command 2: Secure Workstation File Resolution
 
-Claude is best used for a bounded workstream that has minimal overlap with the
-frontend persistence and sidebar agents:
+Add a camelCase struct DTO and Tauri command:
 
-### Native workstation scaffolding
+```text
+workstation_resolve_file(request: WorkstationFileRequest)
+  -> WorkstationFileResolution
+```
 
-After the lead confirms the frontend-to-Rust command DTO, Claude may own:
+Request JSON:
 
-- A focused Rust workstation-scaffolding module under
-  `src-tauri/src/modules/`.
-- Thin Tauri command registration in `src-tauri/src/lib.rs`.
-- Input and path validation at the IPC boundary.
-- Idempotent creation of the directories and three canonical prompt files.
-- Safe creation of `workstation.json` using structured serialization.
-- Explicit behavior for an existing non-empty directory.
-- Rollback or a clearly defined partial-failure policy.
-- Rust unit and integration tests using temporary directories.
+```json
+{
+  "rootPath": "C:/Users/Admin/Afflow-workstation",
+  "relativePath": "outputs/video-prompt.md"
+}
+```
 
-Required invariants:
+Response JSON:
 
-- Never delete or replace unrelated user files.
-- Never use shell command strings for filesystem operations.
-- Never follow an input that escapes the selected workstation root.
-- Re-running scaffolding must be safe and deterministic.
-- Existing prompt files must not be silently overwritten.
-- JSON must be produced with `serde`, not string concatenation.
-- OS access stays in Rust; React invokes a narrow command.
+```json
+{
+  "root": "C:/Users/Admin/Afflow-workstation",
+  "relativePath": "outputs/video-prompt.md",
+  "absolutePath": "C:/Users/Admin/Afflow-workstation/outputs/video-prompt.md"
+}
+```
 
-Do not edit these files for that assignment unless the lead explicitly grants
-ownership:
+Validation requirements:
 
+- Trim and reject an empty root or relative path.
+- Require an absolute workstation root.
+- Require `relativePath` to be relative.
+- Reject root, prefix, parent (`..`), current-directory (`.`), and empty path
+  components rather than normalizing them away.
+- Resolve both root and target through filesystem canonicalization.
+- Require the canonical root to be an existing directory.
+- Require the canonical target to be an existing regular file.
+- Reject directories, missing files, and special files.
+- Require the canonical target to remain under the canonical root.
+- Reject symlink or junction escapes after canonicalization.
+- Require the root and target to be inside the existing authorized workspace
+  registry. Do not create a second authorization registry.
+- Return canonical forward-slashed paths through the existing fs helper.
+- Do not open the file and do not read its contents.
+- Do not execute shell commands.
+- Keep the rule independent of specific prompt/output directories so the
+  frontend can use the same secure command for known prompt paths and explicit
+  referenced output paths.
+
+Partial or ambiguous resolution is an error. Do not fall back to home and do
+not search by basename.
+
+## Suggested Native Layout
+
+Prefer a focused module such as:
+
+```text
+src-tauri/src/modules/agent_presets.rs
+```
+
+or a clearly separated Phase 2 file under the existing workstation module.
+
+Claude may touch only these areas:
+
+- New Phase 2 Rust module and its tests
+- A narrow export in `src-tauri/src/modules/mod.rs` if needed
+- A narrow command registration in `src-tauri/src/lib.rs`
+- `src-tauri/src/modules/lsp/env.rs` or `lsp/mod.rs` only if a minimal
+  visibility change is needed to reuse executable resolution
+
+Do not edit:
+
+- `src/app/App.tsx`
+- `src/modules/agents/**`
 - `src/modules/spaces/**`
 - `src/modules/tabs/**`
-- `src/app/App.tsx`
-- workstation sidebar components
+- `src/modules/terminal/**`
+- `src/modules/settings/**`
+- `src/settings/**`
+- package manifests unless a real blocker is first reported
+- `PROJECT.md`
+- this handoff file
 
-### Secondary contribution
+## Required Rust Tests
 
-After the implementation agents finish, Claude can independently review and
-test these failure cases:
+CLI detection tests:
 
-- migration from the unversioned Phase 0 Space schema
-- missing or moved workstation roots
-- duplicate names versus stable unique IDs
-- switching after a terminal navigates outside its initial root
-- archive with dirty editor tabs
-- archive with running terminals
-- restart with a missing last-active workstation
-- malformed persisted JSON
-- scaffold retry after partial creation
-- Windows path separators, drive letters, and case differences
+- Stable IDs, executable names, and ordering
+- Found command reports `available: true` and a path
+- Missing command reports `available: false` and `resolvedPath: null`
+- Detection uses an injected resolver in pure tests rather than depending on
+  Claude/Codex/Gemini/OpenCode being installed on the test machine
 
-Report findings first with file and line references. Do not silently refactor
-unrelated code during review.
+File-resolution tests using real temporary directories:
 
-## Multi-Agent Coordination Rules
+- Resolves a normal prompt file
+- Resolves a normal output file
+- Produces forward-slashed root, relative, and absolute paths
+- Rejects empty values
+- Rejects a relative root
+- Rejects an absolute target path
+- Rejects `..`, `.`, prefix, and root components
+- Rejects a missing target
+- Rejects a directory target
+- Rejects a root that is a file
+- Rejects a target outside the root
+- Rejects a symlink or junction escape after canonicalization
+- Rejects an unauthorized root or target
+- Handles Windows separators and drive-letter case without bypassing
+  containment
 
-- The lead agent owns contracts, sequencing, integration, and final status.
-- Claim exact files before editing. One agent owns a file at a time.
-- Do not make opportunistic changes outside the assigned workstream.
-- Re-read `git diff` before every edit because another agent may have changed
-  the shared checkout.
-- Keep commits small and limited to the assigned workstream.
-- Do not amend, squash, rebase, force-push, or change branches while other
-  agents are active unless the lead explicitly coordinates it.
-- Do not mark Phase 1 complete independently. Return changed files, tests run,
-  failures, and remaining risks to the lead.
+Tests that require symlink privileges must be platform-aware, but the
+production containment check is mandatory on every platform.
 
-Before beginning implementation, send the lead:
+## Codex Work Running In Parallel
 
-1. The proposed command name and request/response types.
-2. Existing-directory and overwrite semantics.
-3. The exact files Claude intends to edit.
-4. The test cases Claude intends to add.
+Claude should know these boundaries so it does not duplicate or collide with
+other agents.
 
-## Engineering Rules
+### Codex Agent A: Preset Domain And Persistence
 
-- Use `pnpm`, never npm, npx, or yarn.
-- Use `@/...` frontend imports across modules.
-- Use `apply_patch` for manual edits.
-- Do not add em dashes or emojis to code, comments, docs, or commit messages.
-- Keep React components and Tauri commands thin. Put logic in pure,
-  dependency-light functions that can be tested directly.
-- Validate all filesystem and IPC inputs.
-- Do not add a database, backend service, authentication system, or new heavy
-  dependency for Phase 1.
-- Preserve dirty-editor guards and live PTY lifecycle invariants.
-- Never expose or persist secrets, cookies, tokens, or native process handles
-  in `workstation.json`.
+Owns:
+
+- `src/modules/agents/lib/presets.ts` and tests
+- `src/modules/spaces/lib/store.ts` and tests
+- `src/modules/spaces/lib/useSpaces.ts` and tests
+
+Responsibilities:
+
+- Four default workflow-role definitions
+- Per-workstation preset persistence
+- Spaces schema version 2 migration
+- CLI selection and optional custom-command override model
+- Per-workstation update/reset actions
+- Malformed-data normalization and isolation tests
+
+### Codex Agent B: Preset UI
+
+Owns new component files only under `src/modules/agents/components/`.
+
+Responsibilities:
+
+- Compact four-role launcher/configuration surface
+- CLI selection and custom-command editing
+- Launch, Open prompt, Copy startup instruction, and output actions
+- Missing CLI and prompt states
+- Accessible keyboard, focus, loading, and error behavior
+- Component tests
+
+### Codex Agent C: Terminal File References
+
+Owns terminal-only link parsing and renderer integration.
+
+Responsibilities:
+
+- Conservative links for explicit workspace-relative file references
+- Pooled renderer callbacks resolved against the current leaf at click time
+- No arbitrary prose parsing, shell execution, or `file://` external opening
+- Parser, stale-leaf, and callback tests
+
+### Lead Codex Agent
+
+Owns all shared integration:
+
+- Barrels and shared types
+- `NewTabMenu`
+- `App.tsx`
+- Native TypeScript wrappers
+- Launch orchestration
+- Prompt and output-file opening
+- Final visual verification, full test gates, commit, and push
+
+## Integration Contracts Claude Must Preserve
+
+- Detection IDs must match the existing launcher IDs exactly.
+- File resolution must return canonical absolute paths suitable for
+  `openFileTab` after the frontend selects the owning workstation.
+- The native commands must be thin imperative shells around pure/testable
+  functions.
+- Errors must be readable strings that the frontend can surface directly.
+- No credentials, tokens, prompt contents, process handles, or terminal state
+  may be returned or persisted.
+- Do not add CLI-specific startup flags or assume any CLI accepts startup text.
+- Do not modify existing terminal agent hooks or OSC notification protocols.
 
 ## Verification Commands
 
-Run the focused tests during development, then the applicable full checks
-before handing work back:
+Use the explicit cargo path if `cargo` is not on PATH:
 
 ```powershell
-pnpm lint
-pnpm check-types
-pnpm test
-pnpm build
-Set-Location src-tauri
-cargo clippy --all-targets --locked -- -D warnings
-cargo test --locked
+& 'C:\Users\Admin\.cargo\bin\cargo.exe' fmt --check
+& 'C:\Users\Admin\.cargo\bin\cargo.exe' clippy --all-targets --locked -- -D warnings
+& 'C:\Users\Admin\.cargo\bin\cargo.exe' test --locked
 ```
 
-Use `cargo nextest run --locked` when `cargo-nextest` is installed. A core
-filesystem, persistence, tab, or PTY behavior change requires a test that locks
-the invariant.
+Do not run frontend formatting commands. Other agents may have in-flight
+frontend work in the shared checkout.
 
-## Handoff Response Format
+## Coordination Rules
 
-When returning work to the lead, provide:
+- Do not commit. The lead will review and create one combined Phase 2 commit.
+- Do not stage unrelated files.
+- Do not revert or reformat another agent's changes.
+- Before changing `lib.rs`, `modules/mod.rs`, or LSP visibility, inspect the
+  current diff and preserve concurrent edits.
+- If a contract must change, stop and report the exact reason before editing
+  beyond the approved assignment.
+- When finished, remain available for review fixes.
 
-```text
-Assignment:
-Files changed:
-Behavior implemented:
-Tests added:
-Commands run and results:
-Known limitations or risks:
-Suggested integration steps:
-```
+## Required Return Report
 
+Return all of the following:
+
+1. Exact files changed
+2. DTO and response shapes implemented
+3. Validation and authorization behavior
+4. Tests added and exact results
+5. Clippy and cargo test results
+6. Known limitations or risks
+7. Integration steps for the lead
+8. Confirmation that no frontend files were touched
+9. Confirmation that nothing was committed
+
+## Phase 2 Acceptance Checklist
+
+The combined team implementation is complete only when:
+
+- Every workstation has exactly four default workflow roles.
+- Role configuration persists across restart and remains isolated by
+  workstation.
+- A Phase 1 store migrates without losing workstation identity, active state,
+  tabs, or layout.
+- At least one installed supported CLI can launch all four roles.
+- Every role terminal starts at the canonical active workstation root.
+- Missing CLI, missing root, missing prompt, and invalid custom command states
+  fail clearly without creating a broken session.
+- Each specialized role can open its prompt and copy its startup instruction.
+- Explicit output references open only when they resolve to a regular file
+  inside the owning authorized workstation.
+- General Agent exposes no prompt action.
+- No prompt content, credentials, tokens, PTY handles, or live terminal state
+  is persisted in workstation configuration.
+- Existing launcher hooks, notification routing, renderer pooling, Phase 1
+  workstation switching, persistence, and archive guards remain intact.
+- Frontend type-check, tests, build, lint, strict Clippy, full Rust tests, and
+  native Windows visual verification pass.
+
+## Scope Traps
+
+- Do not treat the four roles as four CLI brands.
+- Do not remove Pi or Grok compatibility.
+- Do not add CLI-specific prompt flags.
+- Do not parse arbitrary terminal prose as file references.
+- Do not store mutable presets in `workstation.json`.
+- Do not auto-start agent processes during hydration.
+- Do not expand Phase 2 into browser profiles, browser launchers, product
+  records, or WSL support.
+- Do not let a pooled renderer callback retain a previous leaf or workstation.
