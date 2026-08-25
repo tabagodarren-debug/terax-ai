@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { getBindingTokens, type KeyBinding, matchBinding } from "./shortcuts";
+import {
+  getBindingTokens,
+  type KeyBinding,
+  matchBinding,
+  SHORTCUT_GROUPS,
+  SHORTCUTS,
+} from "./shortcuts";
 
 // These tests run in the vitest node environment, where the Tauri OS plugin is
 // unavailable so `IS_MAC` resolves to false. That makes the non-mac token
@@ -125,5 +131,24 @@ describe("matchBinding", () => {
     expect(
       matchBinding(event({ key: "x" }), { key: "1" }, "tab.selectByIndex"),
     ).toBe(false);
+  });
+});
+
+describe("shortcut registry", () => {
+  it("includes every shortcut group in the configured display order", () => {
+    expect(new Set(SHORTCUT_GROUPS)).toEqual(
+      new Set(SHORTCUTS.map((shortcut) => shortcut.group)),
+    );
+  });
+
+  it("registers save and save-all without an unmodified shell control key", () => {
+    expect(
+      SHORTCUTS.find((shortcut) => shortcut.id === "editor.save")
+        ?.defaultBindings,
+    ).toEqual([{ ctrl: true, key: "s" }]);
+    expect(
+      SHORTCUTS.find((shortcut) => shortcut.id === "editor.saveAll")
+        ?.defaultBindings,
+    ).toEqual([{ ctrl: true, alt: true, key: "s" }]);
   });
 });

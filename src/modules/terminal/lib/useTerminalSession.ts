@@ -791,7 +791,7 @@ export async function leafHasForegroundProcess(
       leafId,
       e,
     );
-    return false;
+    return true;
   }
 }
 

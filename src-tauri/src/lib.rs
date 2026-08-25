@@ -1,7 +1,8 @@
 pub mod modules;
 
 use modules::{
-    agent, control, fs, git, history, lsp, net, pty, secrets, shell, vibrancy, workspace,
+    agent, agent_presets, browser, control, fs, git, history, lsp, net, pty, secrets, session,
+    shell, vibrancy, workspace, workstation,
 };
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -128,13 +129,13 @@ async fn open_settings_window(app: tauri::AppHandle, tab: Option<String>) -> Res
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     let builder = builder.decorations(false).transparent(true);
 
-    let window = builder.build().map_err(|e| e.to_string())?;
+    let _window = builder.build().map_err(|e| e.to_string())?;
 
     // Some Linux compositors (GNOME/Mutter with CSD-by-default) ignore the
     // builder-time decorations flag — re-assert it after realize.
     #[cfg(target_os = "linux")]
     {
-        let _ = window.set_decorations(false);
+        let _ = _window.set_decorations(false);
     }
 
     #[cfg(target_os = "macos")]
@@ -142,15 +143,15 @@ async fn open_settings_window(app: tauri::AppHandle, tab: Option<String>) -> Res
         if let (Ok(main_pos), Ok(main_size), Ok(settings_size)) = (
             main.outer_position(),
             main.outer_size(),
-            window.outer_size(),
+            _window.outer_size(),
         ) {
             let x = main_pos.x
                 + ((main_size.width as i32).saturating_sub(settings_size.width as i32)) / 2;
             let y = main_pos.y
                 + ((main_size.height as i32).saturating_sub(settings_size.height as i32)) / 2;
-            let _ = window.set_position(PhysicalPosition::new(x, y));
+            let _ = _window.set_position(PhysicalPosition::new(x, y));
         } else {
-            let _ = window.center();
+            let _ = _window.center();
         }
     }
 
@@ -184,8 +185,8 @@ pub fn run() {
     #[cfg(target_os = "linux")]
     let builder = builder.plugin(tauri_plugin_clipboard_manager::init());
     builder
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         // Skip restoring VISIBLE — frontend calls window.show() after first
         // paint so the user never sees a transparent window-shadow flash on
         // Windows/Linux.
@@ -205,8 +206,11 @@ pub fn run() {
         )
         .plugin(tauri_plugin_opener::init())
         .setup(move |_app| {
+            let session_state = session::SessionState::initialize(_app.handle())
+                .map_err(std::io::Error::other)?;
+            _app.manage(session_state);
             if let Err(error) = control::start(_app.handle().clone(), control_for_setup.clone()) {
-                log::warn!("could not start Terax control server: {error}");
+                log::warn!("could not start Afflow control server: {error}");
             }
             // macOS skips parent() for the settings window, so tie its lifecycle
             // to the main window here instead. Other platforms keep parent().
@@ -227,6 +231,7 @@ pub fn run() {
             Ok(())
         })
         .manage(pty::PtyState::default())
+        .manage(browser::BrowserState::default())
         .manage(control_state)
         .manage(shell::ShellState::default())
         .manage(secrets::SecretsState::default())
@@ -310,6 +315,18 @@ pub fn run() {
             workspace::wsl_home,
             workspace::workspace_authorize,
             workspace::workspace_current_dir,
+            workstation::workstation_scaffold,
+            workstation::resolve::workstation_resolve_file,
+            agent_presets::agent_cli_detect,
+            browser::browser_detect,
+            browser::browser_validate_executable,
+            browser::browser_profile_status,
+            browser::browser_launch,
+            browser::browser_profile_open_folder,
+            browser::browser_profile_reset,
+            session::session_acknowledge_recovery,
+            session::session_mark_clean,
+            session::session_startup_status,
             control::control_frontend_ready,
             control::control_respond,
             get_launch_dir,

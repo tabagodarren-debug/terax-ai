@@ -6,6 +6,12 @@ export {
   type DiagnosticCounts,
   useDiagnosticsStore,
 } from "./lib/diagnosticsStore";
+export {
+  createSaveAllCoordinator,
+  type SaveAllEditorsResult,
+  saveAllDirtyEditors,
+  saveEditor,
+} from "./lib/saveAll";
 export { useApplyEditorFontSize } from "./lib/useApplyEditorFontSize";
 export { NewEditorDialog } from "./NewEditorDialog";
 export { useEditorFileSync } from "./useEditorFileSync";

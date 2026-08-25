@@ -78,6 +78,8 @@ export type EditorPaneHandle = {
   /** Apply CodeMirror's undo/redo commands. */
   undo: () => void;
   redo: () => void;
+  /** Save the current buffer and report whether it is clean afterward. */
+  save: () => Promise<boolean>;
   /** Request an AI ghost suggestion at the cursor. */
   triggerAiComplete: () => void;
   /** Open CodeMirror's completion popup. */
@@ -108,7 +110,7 @@ export const EditorPane = memo(
   forwardRef<EditorPaneHandle, Props>(function EditorPane(props, ref) {
     const { path, overrideLanguage, onDirtyChange, onSaved, onClose } = props;
 
-    const { doc, onChange, save, reload, adoptDiskText, openAnyway } =
+    const { doc, onChange, save, isDirty, reload, adoptDiskText, openAnyway } =
       useDocument({
         path,
         onDirtyChange,
@@ -175,6 +177,8 @@ export const EditorPane = memo(
     // whole state, wiping the language compartment.
     const saveRef = useRef(save);
     saveRef.current = save;
+    const isDirtyRef = useRef(isDirty);
+    isDirtyRef.current = isDirty;
     const onSavedRef = useRef(onSaved);
     onSavedRef.current = onSaved;
     const onCloseRef = useRef(onClose);
@@ -216,7 +220,7 @@ export const EditorPane = memo(
       // must not be clobbered by the disk read-back.
       const docAtSave = view?.state.doc;
       const saved = await saveRef.current();
-      if (!saved) return;
+      if (!saved) return false;
       if (prefs.editorFormatOnSave && formatter !== "lsp") {
         const error = await runExternalFormatter(
           formatter,
@@ -236,6 +240,7 @@ export const EditorPane = memo(
         }
       }
       onSavedRef.current?.();
+      return !isDirtyRef.current();
     }, []);
     const performSaveRef = useRef(performSave);
     performSaveRef.current = performSave;
@@ -534,6 +539,7 @@ export const EditorPane = memo(
           const view = cmRef.current?.view;
           if (view) redo(view);
         },
+        save: () => performSaveRef.current(),
         triggerAiComplete: () => {
           const view = cmRef.current?.view;
           if (view) triggerInlineCompletion(view);
@@ -624,7 +630,8 @@ export const EditorPane = memo(
         );
       }
 
-      const canForce = doc.status === "toolarge" && doc.size <= FORCE_READ_LIMIT;
+      const canForce =
+        doc.status === "toolarge" && doc.size <= FORCE_READ_LIMIT;
       return (
         <div className="flex h-full flex-col items-center justify-center gap-1 px-6 text-center">
           <div className="text-sm text-foreground">

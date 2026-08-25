@@ -186,6 +186,8 @@ export function useDocument({ path, onDirtyChange }: Options) {
     return saveNow();
   }, [clearAutoSaveTimer, saveNow]);
 
+  const isDirty = useCallback(() => bufferRef.current !== savedRef.current, []);
+
   // Adopt externally formatted disk content as the saved baseline before the
   // matching editor dispatch lands, so the buffer never flashes dirty. The
   // formatter's own write must also become the known mtime, or the next save
@@ -223,5 +225,14 @@ export function useDocument({ path, onDirtyChange }: Options) {
 
   useEffect(() => clearAutoSaveTimer, [path, clearAutoSaveTimer]);
 
-  return { doc, dirty, onChange, save, reload, adoptDiskText, openAnyway };
+  return {
+    doc,
+    dirty,
+    isDirty,
+    onChange,
+    save,
+    reload,
+    adoptDiskText,
+    openAnyway,
+  };
 }

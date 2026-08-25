@@ -1,4 +1,6 @@
 pub mod agent;
+pub mod agent_presets;
+pub mod browser;
 pub mod control;
 pub mod fs;
 pub mod git;
@@ -8,6 +10,8 @@ pub mod net;
 pub mod proc;
 pub mod pty;
 pub mod secrets;
+pub mod session;
 pub mod shell;
 pub mod vibrancy;
 pub mod workspace;
+pub mod workstation;

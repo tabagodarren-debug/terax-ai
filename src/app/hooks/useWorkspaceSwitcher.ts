@@ -1,12 +1,16 @@
-import { type RefObject, useCallback, useEffect, useState } from "react";
-import { homeDir } from "@tauri-apps/api/path";
+import { evaluateCloseHazards } from "@/app/hooks/tabCloseGuards";
+import { workspaceSwitchBlockedMessage } from "@/app/hooks/workspaceSwitchGuards";
 import { native } from "@/modules/ai/lib/native";
+import { usePreferencesStore } from "@/modules/settings/preferences";
 import type { Tab } from "@/modules/tabs";
+import { leafHasForegroundProcess, leafIds } from "@/modules/terminal";
 import {
   getWslHome,
   LOCAL_WORKSPACE,
   type WorkspaceEnv,
 } from "@/modules/workspace";
+import { homeDir } from "@tauri-apps/api/path";
+import { type RefObject, useCallback, useEffect, useState } from "react";
 
 async function resolveEnvHome(env: WorkspaceEnv): Promise<string> {
   return env.kind === "wsl"
@@ -80,11 +84,30 @@ export function useWorkspaceSwitcher({
       ) {
         return false;
       }
-      const dirty = tabsRef.current.some((t) => t.kind === "editor" && t.dirty);
-      if (dirty) {
-        window.alert(
-          "Save or close unsaved editor tabs before switching workspace.",
-        );
+      const capture = () => ({
+        dirtyIds: tabsRef.current
+          .filter((tab) => tab.kind === "editor" && tab.dirty)
+          .map((tab) => tab.id),
+        leafIds: tabsRef.current.flatMap((tab) =>
+          tab.kind === "terminal" ? leafIds(tab.paneTree) : [],
+        ),
+      });
+      const initialMessage = workspaceSwitchBlockedMessage({
+        dirtyIds: capture().dirtyIds,
+        busyLeafIds: [],
+      });
+      if (initialMessage) {
+        window.alert(initialMessage);
+        return false;
+      }
+      const hazards = await evaluateCloseHazards(
+        capture,
+        leafHasForegroundProcess,
+        usePreferencesStore.getState().confirmCloseRunningTerminal,
+      );
+      const blockedMessage = workspaceSwitchBlockedMessage(hazards);
+      if (blockedMessage) {
+        window.alert(blockedMessage);
         return false;
       }
 

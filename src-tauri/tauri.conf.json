@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Terax",
-  "version": "0.8.6",
-  "identifier": "app.crynta.terax",
+  "productName": "Afflow",
+  "version": "0.1.0",
+  "identifier": "app.afflow.desktop",
   "build": {
-    "beforeDevCommand": "pnpm build:cli:dev && pnpm dev",
+    "beforeDevCommand": "corepack pnpm build:cli:dev && corepack pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build:cli && pnpm build",
+    "beforeBuildCommand": "corepack pnpm build:cli && corepack pnpm build",
     "frontendDist": "../dist",
     "removeUnusedCommands": true
   },
@@ -14,7 +14,7 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "Terax",
+        "title": "Afflow",
         "width": 800,
         "height": 600,
         "minWidth": 420,
@@ -40,10 +40,10 @@
       "binaries/terax-cli"
     ],
     "targets": "all",
-    "createUpdaterArtifacts": true,
-    "copyright": "Copyright 2026 Crynta",
+    "createUpdaterArtifacts": false,
+    "copyright": "Copyright 2026 Afflow contributors. Based on Terax by Crynta.",
     "license": "Apache-2.0",
-    "publisher": "Crynta",
+    "publisher": "Afflow",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -88,11 +88,11 @@
       }
     },
     "category": "DeveloperTool",
-    "shortDescription": "AI-native terminal emulator",
-    "longDescription": "Terax — an open-source AI-native terminal emulator with multi-tab, file explorer, code editor, web preview, voice input, and AI agents.",
+    "shortDescription": "Desktop production workspace for affiliate creators",
+    "longDescription": "Afflow coordinates files, terminal agents, and external browser profiles in persistent content-production workstations.",
     "fileAssociations": [
       {
-        "name": "Terax Document",
+        "name": "Afflow Document",
         "role": "Editor",
         "mimeType": "text/plain",
         "ext": [
@@ -108,13 +108,5 @@
         ]
       }
     ]
-  },
-  "plugins": {
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNCQUJGRDhBQjYwRTM0NjkKUldScE5BNjJpdjJyT3dIN0dqbUpHaDA4QW1GaDVmTTllRXdZVk96dFNTRUZ3Y2hiVGszYjFqRloK",
-      "endpoints": [
-        "https://github.com/crynta/terax-ai/releases/latest/download/latest.json"
-      ]
-    }
   }
 }

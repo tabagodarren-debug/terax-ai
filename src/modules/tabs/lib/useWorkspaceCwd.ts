@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { Tab } from "./useTabs";
 
 type Result = {
@@ -6,34 +6,96 @@ type Result = {
   inheritedCwdForNewTab: () => string | undefined;
 };
 
-export function useWorkspaceCwd(
+type UseWorkspaceCwdInput = {
+  workstationId: string | null;
+  workstationRoot: string | null | undefined;
+  activeTab: Tab | undefined;
+  fallbackRoot: string | null;
+};
+
+type RememberedTerminalCwd = {
+  workstationKey: string;
+  cwd: string;
+};
+
+function normalizeRoot(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
+export function resolveExplorerRoot(
+  workstationRoot: string | null | undefined,
+  fallbackRoot: string | null,
+): string | null {
+  const root = workstationRoot || fallbackRoot;
+  return root ? normalizeRoot(root) : null;
+}
+
+export function workstationCwdKey(
+  workstationId: string | null,
+  workstationRoot: string | null | undefined,
+): string | null {
+  if (!workstationId) return null;
+  return `${workstationId}\0${workstationRoot ? normalizeRoot(workstationRoot) : ""}`;
+}
+
+export function resolveInheritedCwd(
   activeTab: Tab | undefined,
-  tabs: Tab[],
-  home: string | null,
-): Result {
-  const lastTerminalCwd = useRef<string | null>(null);
+  workstationId: string | null,
+  workstationKey: string | null,
+  remembered: RememberedTerminalCwd | null,
+  workstationRoot: string | null | undefined,
+  fallbackRoot: string | null,
+): string | undefined {
+  if (
+    workstationId &&
+    activeTab?.spaceId === workstationId &&
+    activeTab.kind === "terminal" &&
+    activeTab.cwd
+  ) {
+    return activeTab.cwd;
+  }
+  if (workstationKey && remembered?.workstationKey === workstationKey) {
+    return remembered.cwd;
+  }
+  return (
+    resolveExplorerRoot(workstationRoot, null) ?? fallbackRoot ?? undefined
+  );
+}
+
+export function useWorkspaceCwd({
+  workstationId,
+  workstationRoot,
+  activeTab,
+  fallbackRoot,
+}: UseWorkspaceCwdInput): Result {
+  const lastTerminalCwd = useRef<RememberedTerminalCwd | null>(null);
+  const workstationKey = workstationCwdKey(workstationId, workstationRoot);
 
   useEffect(() => {
-    if (activeTab?.kind === "terminal" && activeTab.cwd) {
-      lastTerminalCwd.current = activeTab.cwd;
+    if (
+      workstationKey &&
+      activeTab?.spaceId === workstationId &&
+      activeTab.kind === "terminal" &&
+      activeTab.cwd
+    ) {
+      lastTerminalCwd.current = { workstationKey, cwd: activeTab.cwd };
     }
-  }, [activeTab]);
+  }, [activeTab, workstationId, workstationKey]);
 
-  const explorerRoot = useMemo<string | null>(() => {
-    if (activeTab?.kind === "terminal" && activeTab.cwd) return activeTab.cwd;
-    if (lastTerminalCwd.current) return lastTerminalCwd.current;
-    const anyTerm = tabs.find((t) => t.kind === "terminal" && t.cwd);
-    if (anyTerm?.kind === "terminal" && anyTerm.cwd) return anyTerm.cwd;
-    return home;
-  }, [activeTab, tabs, home]);
+  const explorerRoot = resolveExplorerRoot(workstationRoot, fallbackRoot);
 
   const inheritedCwdForNewTab = useCallback((): string | undefined => {
-    if (activeTab?.kind === "terminal" && activeTab.cwd) return activeTab.cwd;
-    // Editor tabs inherit the last terminal's cwd (or workspace home), not
-    // the file's folder — opening a new terminal from a file shouldn't
-    // hijack the user's working directory context.
-    return lastTerminalCwd.current ?? home ?? undefined;
-  }, [activeTab, home]);
+    // Editor tabs inherit the last terminal cwd for this workstation, not
+    // the file's folder. A different workstation cannot reuse that memory.
+    return resolveInheritedCwd(
+      activeTab,
+      workstationId,
+      workstationKey,
+      lastTerminalCwd.current,
+      workstationRoot,
+      fallbackRoot,
+    );
+  }, [activeTab, fallbackRoot, workstationId, workstationKey, workstationRoot]);
 
   return { explorerRoot, inheritedCwdForNewTab };
 }

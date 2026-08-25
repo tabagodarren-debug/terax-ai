@@ -12,6 +12,10 @@ import {
 } from "@/components/ui/popover";
 import { fmtShortcut, MOD_KEY, SHIFT_KEY } from "@/lib/platform";
 import { AgentLauncherPanel } from "@/modules/agents/components/AgentLauncherPanel";
+import {
+  AgentPresetPanel,
+  type AgentPresetPanelProps,
+} from "@/modules/agents/components/AgentPresetPanel";
 import type { AgentLaunchRequest } from "@/modules/agents/lib/launcher";
 import {
   AiBrowserIcon,
@@ -24,7 +28,12 @@ import {
   PlusSignIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+
+export type AgentPresetMenuConfig = Omit<
+  AgentPresetPanelProps,
+  "selectedPresetId" | "onSelect" | "onBack"
+>;
 
 type Props = {
   onNew: () => void;
@@ -34,6 +43,7 @@ type Props = {
   onNewEditor: () => void;
   onNewGitGraph: () => void;
   onLaunchAgents: (request: AgentLaunchRequest) => void;
+  agentPresets: AgentPresetMenuConfig;
 };
 
 export function NewTabMenu({
@@ -44,11 +54,28 @@ export function NewTabMenu({
   onNewEditor,
   onNewGitGraph,
   onLaunchAgents,
+  agentPresets,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [launcherOpen, setLauncherOpen] = useState(false);
+  const [launcherView, setLauncherView] = useState<"presets" | "advanced">(
+    "presets",
+  );
+  const [selectedPresetId, setSelectedPresetId] = useState(
+    agentPresets.presets[0]?.id ?? null,
+  );
   const openLauncherAfterMenuClose = useRef(false);
   const openMenuAfterLauncherClose = useRef(false);
+
+  useEffect(() => {
+    if (
+      selectedPresetId &&
+      agentPresets.presets.some((preset) => preset.id === selectedPresetId)
+    ) {
+      return;
+    }
+    setSelectedPresetId(agentPresets.presets[0]?.id ?? null);
+  }, [agentPresets.presets, selectedPresetId]);
 
   const onMenuOpenChange = (next: boolean) => {
     if (next) {
@@ -59,6 +86,7 @@ export function NewTabMenu({
   };
 
   const openLauncher = () => {
+    setLauncherView("presets");
     openLauncherAfterMenuClose.current = true;
   };
 
@@ -184,15 +212,52 @@ export function NewTabMenu({
           openMenuAfterLauncherClose.current = false;
           requestAnimationFrame(() => setMenuOpen(true));
         }}
-        className="w-[340px] gap-0 overflow-hidden rounded-2xl p-1.5"
+        className="max-h-[calc(100vh-24px)] w-[420px] max-w-[calc(100vw-16px)] gap-0 overflow-y-auto rounded-lg p-1.5"
       >
-        <AgentLauncherPanel
-          onBack={backToMenu}
-          onLaunch={(request) => {
-            setLauncherOpen(false);
-            onLaunchAgents(request);
-          }}
-        />
+        {launcherView === "presets" ? (
+          <>
+            <AgentPresetPanel
+              {...agentPresets}
+              selectedPresetId={selectedPresetId}
+              onSelect={setSelectedPresetId}
+              onBack={backToMenu}
+              onLaunch={(presetId) => {
+                setLauncherOpen(false);
+                agentPresets.onLaunch(presetId);
+              }}
+              onOpenPrompt={(presetId) => {
+                setLauncherOpen(false);
+                agentPresets.onOpenPrompt(presetId);
+              }}
+              onOpenOutputs={(presetId) => {
+                setLauncherOpen(false);
+                agentPresets.onOpenOutputs(presetId);
+              }}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              className="mt-1 w-full justify-between rounded-md text-muted-foreground"
+              onClick={() => setLauncherView("advanced")}
+            >
+              Advanced multi-pane launcher
+              <HugeiconsIcon
+                icon={ArrowRight01Icon}
+                size={13}
+                strokeWidth={1.75}
+              />
+            </Button>
+          </>
+        ) : (
+          <AgentLauncherPanel
+            onBack={() => setLauncherView("presets")}
+            onLaunch={(request) => {
+              setLauncherOpen(false);
+              onLaunchAgents(request);
+            }}
+          />
+        )}
       </PopoverContent>
     </Popover>
   );

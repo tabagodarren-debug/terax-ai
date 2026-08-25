@@ -8,7 +8,7 @@ import type { Theme } from "../types";
  */
 export const teraxDefault: Theme = {
   id: "terax-default",
-  name: "Terax Default",
+  name: "Afflow Default",
   description: "Clean neutral greys with a full-color terminal.",
   editorTheme: { dark: "github-dark", light: "github-light" },
   variants: {

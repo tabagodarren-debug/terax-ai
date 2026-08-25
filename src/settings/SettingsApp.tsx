@@ -5,6 +5,7 @@ import type { SettingsTab } from "@/modules/settings/openSettingsWindow";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import {
   AiScanIcon,
+  BrowserIcon,
   InformationCircleIcon,
   KeyboardIcon,
   PaintBoardIcon,
@@ -17,6 +18,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { type JSX, useEffect, useState } from "react";
 import { AboutSection } from "./sections/AboutSection";
 import { AgentsSection } from "./sections/AgentsSection";
+import { BrowserSection } from "@/settings/sections/BrowserSection";
 import { EditorSection } from "./sections/EditorSection";
 import { GeneralSection } from "./sections/GeneralSection";
 import { ModelsSection } from "./sections/ModelsSection";
@@ -34,6 +36,12 @@ const TABS: {
     label: "General",
     icon: Settings01Icon,
     component: GeneralSection,
+  },
+  {
+    id: "browser",
+    label: "Browser",
+    icon: BrowserIcon,
+    component: BrowserSection,
   },
   {
     id: "editor",
@@ -70,6 +78,7 @@ const TABS: {
 
 const VALID_TABS: SettingsTab[] = [
   "general",
+  "browser",
   "editor",
   "themes",
   "shortcuts",

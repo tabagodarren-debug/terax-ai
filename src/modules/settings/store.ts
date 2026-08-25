@@ -19,6 +19,7 @@ import {
   DEFAULT_AGENT_LAUNCH_COMMANDS,
   normalizeAgentLaunchCommands,
 } from "@/modules/agents/lib/launcher";
+import type { BrowserId } from "@/modules/browser-tools/lib/types";
 import type { KeyBinding, ShortcutId } from "@/modules/shortcuts/shortcuts";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { LazyStore } from "@tauri-apps/plugin-store";
@@ -184,7 +185,14 @@ export type Preferences = {
   editorCustomFormatCommand: string;
   lspActivation: Record<string, LspActivation>;
   lspCustomServers: LspCustomServer[];
+  preferredBrowserId: BrowserId;
+  browserExecutableOverrides: Partial<Record<BrowserId, string>>;
 };
+
+export type BrowserPreferences = Pick<
+  Preferences,
+  "preferredBrowserId" | "browserExecutableOverrides"
+>;
 
 export type EditorFormatter =
   | "lsp"
@@ -277,6 +285,8 @@ const KEY_EDITOR_FORMATTER_BY_LANG = "editorFormatterByLang";
 const KEY_EDITOR_CUSTOM_FORMAT_COMMAND = "editorCustomFormatCommand";
 const KEY_LSP_ACTIVATION = "lspActivation";
 const KEY_LSP_CUSTOM_SERVERS = "lspCustomServers";
+const KEY_PREFERRED_BROWSER_ID = "preferredBrowserId";
+const KEY_BROWSER_EXECUTABLE_OVERRIDES = "browserExecutableOverrides";
 
 export const TERMINAL_FONT_SIZE_DEFAULT = 14;
 export const TERMINAL_FONT_SIZE_MIN = 8;
@@ -368,6 +378,8 @@ export const DEFAULT_PREFERENCES: Preferences = {
   editorCustomFormatCommand: "",
   lspActivation: {},
   lspCustomServers: [],
+  preferredBrowserId: "chrome",
+  browserExecutableOverrides: {},
 };
 
 const store = new LazyStore(STORE_PATH, { defaults: {}, autoSave: 200 });
@@ -573,7 +585,64 @@ export async function loadPreferences(): Promise<Preferences> {
     lspCustomServers:
       get<LspCustomServer[]>(KEY_LSP_CUSTOM_SERVERS) ??
       DEFAULT_PREFERENCES.lspCustomServers,
+    preferredBrowserId: normalizePreferredBrowserId(
+      get<unknown>(KEY_PREFERRED_BROWSER_ID),
+    ),
+    browserExecutableOverrides: normalizeBrowserExecutableOverrides(
+      get<unknown>(KEY_BROWSER_EXECUTABLE_OVERRIDES),
+    ),
   };
+}
+
+export function normalizePreferredBrowserId(value: unknown): BrowserId {
+  return value === "edge" ? "edge" : "chrome";
+}
+
+export function normalizeBrowserExecutableOverrides(
+  value: unknown,
+): Partial<Record<BrowserId, string>> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  const source = value as Record<string, unknown>;
+  const result: Partial<Record<BrowserId, string>> = {};
+  for (const browserId of ["chrome", "edge"] as const) {
+    const path = normalizeStoredBrowserPath(source[browserId]);
+    if (path) result[browserId] = path;
+  }
+  return result;
+}
+
+function normalizeStoredBrowserPath(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const path = value.trim().replace(/\\/g, "/");
+  if (!path || /[\u0000-\u001f\u007f]/.test(path)) return null;
+  if (!/^(?:[A-Za-z]:\/|\/)/.test(path)) return null;
+  if (path.split("/").some((part) => part === "." || part === "..")) {
+    return null;
+  }
+  return path;
+}
+
+export async function setPreferredBrowserId(value: BrowserId): Promise<void> {
+  await writePref(KEY_PREFERRED_BROWSER_ID, value);
+}
+
+export async function setBrowserExecutableOverride(
+  browserId: BrowserId,
+  path: string | null,
+): Promise<void> {
+  const current = normalizeBrowserExecutableOverrides(
+    await store.get(KEY_BROWSER_EXECUTABLE_OVERRIDES),
+  );
+  const next = { ...current };
+  if (path === null) {
+    delete next[browserId];
+  } else {
+    const normalizedPath = normalizeStoredBrowserPath(path);
+    if (!normalizedPath) throw new Error("Invalid browser executable path.");
+    next[browserId] = normalizedPath;
+  }
+  await writePref(KEY_BROWSER_EXECUTABLE_OVERRIDES, next);
 }
 
 export async function setLspActivation(
@@ -1015,6 +1084,8 @@ export async function onPreferencesChange(
     [KEY_EDITOR_CUSTOM_FORMAT_COMMAND]: "editorCustomFormatCommand",
     [KEY_LSP_ACTIVATION]: "lspActivation",
     [KEY_LSP_CUSTOM_SERVERS]: "lspCustomServers",
+    [KEY_PREFERRED_BROWSER_ID]: "preferredBrowserId",
+    [KEY_BROWSER_EXECUTABLE_OVERRIDES]: "browserExecutableOverrides",
   };
   // Same-process writes still fire onChange immediately; cross-window writes
   // arrive via the Tauri event emitted by writePref().

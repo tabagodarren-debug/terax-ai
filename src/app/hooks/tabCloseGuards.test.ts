@@ -63,6 +63,16 @@ describe("evaluateCloseHazards", () => {
     ).resolves.toEqual(hazards([2], [30]));
   });
 
+  it("fails closed when a foreground-process check fails", async () => {
+    const isBusy = vi.fn(async (id: number) => {
+      if (id === 20) throw new Error("native check failed");
+      return false;
+    });
+    await expect(
+      evaluateCloseHazards(() => snapshot, isBusy, true),
+    ).resolves.toEqual(hazards([2], [20]));
+  });
+
   it("skips foreground-process IPC when the user opted out", async () => {
     const isBusy = vi.fn(async () => true);
     await expect(

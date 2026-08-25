@@ -11,10 +11,19 @@ import { usePresence } from "@/lib/usePresence";
 import { useZoom } from "@/lib/useZoom";
 import { isMarkdownPath } from "@/lib/utils";
 import {
+  type AfflowAgentPresetId,
+  type AgentCliDetection,
   type AgentLaunchRequest,
   AgentNotificationsBridge,
+  type AgentPresetAvailability,
+  type AgentPresetUpdate,
+  detectAgentClis,
   findAgentLauncher,
   nextAttentionTarget,
+  resolveWorkstationAgentCommand,
+  resolveWorkstationFile,
+  rootForWorkstation,
+  startupInstructionForPreset,
   validateAgentLaunchCommand,
 } from "@/modules/agents";
 import {
@@ -29,11 +38,15 @@ import {
 } from "@/modules/ai";
 import { AiComposerProvider } from "@/modules/ai/lib/composer";
 import { native } from "@/modules/ai/lib/native";
+import { useBrowserTools } from "@/modules/browser-tools";
 import { CommandPalette, createCommandItems } from "@/modules/command-palette";
 import { useControlBridge } from "@/modules/control";
 import {
+  createSaveAllCoordinator,
   type EditorPaneHandle,
   NewEditorDialog,
+  saveAllDirtyEditors,
+  saveEditor,
   useApplyEditorFontSize,
   useEditorFileSync,
 } from "@/modules/editor";
@@ -46,13 +59,19 @@ import {
 } from "@/modules/header";
 import { setLspNavigator } from "@/modules/lsp";
 import type { PreviewPaneHandle } from "@/modules/preview";
+import {
+  markSessionClean,
+  SessionRecoveryDialog,
+  useSessionRecovery,
+} from "@/modules/recovery";
 import { openSettingsWindow } from "@/modules/settings/openSettingsWindow";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { setShowHidden } from "@/modules/settings/store";
 import {
-  shouldDisablePaneSwapShortcut,
   type ShortcutHandlers,
   type ShortcutId,
+  shouldDisableEditorShortcut,
+  shouldDisablePaneSwapShortcut,
   useGlobalShortcuts,
 } from "@/modules/shortcuts";
 import {
@@ -67,15 +86,24 @@ import {
   useSourceControlContext,
 } from "@/modules/source-control";
 import {
+  authorizeWorkstationRoot,
+  findWorkstationByRoot,
+  newWorkstationId,
+  restoreSavedSpaceTabs,
   SpaceSwitcher,
+  scaffoldWorkstation,
   useSpacePersistence,
   useSpaces,
   useSpacesBoot,
+  WorkstationSidebar,
+  workstationNameFromRoot,
 } from "@/modules/spaces";
+import { accentFor } from "@/modules/spaces/lib/spaceColor";
 import { StatusBar } from "@/modules/statusbar";
 import {
-  TabSwitcherHud,
+  type AgentPresetMenuConfig,
   type CloseTabsPlan,
+  TabSwitcherHud,
   useTabSwitcher,
   useTabs,
   useWindowTitle,
@@ -87,30 +115,35 @@ import {
   disposeSession,
   findLeafCwd,
   hasLeaf,
+  leafHasForegroundProcess,
   leafIds,
   navigateFocusedBlocks,
-  ptyIdForLeaf,
   type PaneBounds,
+  ptyIdForLeaf,
+  setTerminalFileLinkHandler,
+  type TerminalFileLinkTarget,
   type TerminalPaneHandle,
   useAgentActivityStore,
   useTerminalFileDrop,
   whenSessionReady,
   writeToSession,
 } from "@/modules/terminal";
+import { writeTerminalClipboard } from "@/modules/terminal/lib/terminalClipboard";
 import {
   ThemeProvider,
   useThemeFileEditing,
   WindowVibrancyBridge,
 } from "@/modules/theme";
-import { UpdaterDialog } from "@/modules/updater";
 import {
   useWorkspaceEnvStore,
-  workspaceScopeKey,
   type WorkspaceEnv,
+  workspaceScopeKey,
 } from "@/modules/workspace";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { open as openDirectory } from "@tauri-apps/plugin-dialog";
+import { openPath } from "@tauri-apps/plugin-opener";
 import type { SearchAddon } from "@xterm/addon-search";
 import {
   useCallback,
@@ -120,6 +153,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { toast } from "sonner";
 import { CloseDialogs } from "./components/CloseDialogs";
 import {
   TOGGLE_BLOCK_INPUT_EVENT,
@@ -233,7 +267,75 @@ export default function App() {
   });
 
   const activeSpaceId = useSpaces((s) => s.activeId);
+  const workstations = useSpaces((s) => s.spaces);
+  const unavailableRootIds = useSpaces((s) => s.unavailableRootIds);
   const spacesHydrated = useSpaces((s) => s.hydrated);
+  const activeWorkstation = useMemo(() => {
+    const workstation =
+      workstations.find((item) => item.id === activeSpaceId) ??
+      workstations[0] ??
+      null;
+    return workstation && unavailableRootIds.includes(workstation.id)
+      ? { ...workstation, root: null }
+      : workstation;
+  }, [activeSpaceId, unavailableRootIds, workstations]);
+  const [agentCliDetections, setAgentCliDetections] = useState<
+    AgentCliDetection[]
+  >([]);
+  const [agentCliLoading, setAgentCliLoading] = useState(true);
+  const [agentCliError, setAgentCliError] = useState<string | null>(null);
+  const [authorizedAgentRoot, setAuthorizedAgentRoot] = useState<{
+    workstationId: string;
+    root: string;
+  } | null>(null);
+  const [agentPromptAvailability, setAgentPromptAvailability] = useState<
+    Partial<Record<AfflowAgentPresetId, AgentPresetAvailability>>
+  >({});
+  const [agentContextLoading, setAgentContextLoading] = useState(true);
+  const [agentContextError, setAgentContextError] = useState<string | null>(
+    null,
+  );
+
+  const refreshAgentCliDetection = useCallback(async () => {
+    setAgentCliLoading(true);
+    setAgentCliError(null);
+    try {
+      setAgentCliDetections(await detectAgentClis());
+    } catch (error) {
+      setAgentCliDetections([]);
+      setAgentCliError(`Could not detect command line tools: ${String(error)}`);
+    } finally {
+      setAgentCliLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshAgentCliDetection();
+  }, [refreshAgentCliDetection]);
+  const workstationSidebarItems = useMemo(
+    () =>
+      workstations.map((workstation) => ({
+        id: workstation.id,
+        name: workstation.name,
+        root: workstation.root ?? "",
+        color: accentFor(workstation),
+        unavailable:
+          workstation.root === null ||
+          unavailableRootIds.includes(workstation.id),
+        unavailableReason:
+          workstation.root === null
+            ? "No folder is configured"
+            : unavailableRootIds.includes(workstation.id)
+              ? "Folder was moved or is unavailable"
+              : undefined,
+        archiveDisabled: workstations.length <= 1,
+        archiveDisabledReason:
+          workstations.length <= 1
+            ? "At least one workstation is required"
+            : undefined,
+      })),
+    [unavailableRootIds, workstations],
+  );
   const activeSpaceIdRef = useRef(activeSpaceId);
   useLayoutEffect(() => {
     tabsRef.current = tabs;
@@ -252,23 +354,147 @@ export default function App() {
     [switchWorkspace, activeSpaceId],
   );
 
+  const [spacesBootComplete, setSpacesBootComplete] = useState(false);
+  const [recoverySettled, setRecoverySettled] = useState(false);
+  const finishSpacesBoot = useCallback(() => setSpacesBootComplete(true), []);
+
   useSpacesBoot({
     ready: launchCwdResolved,
     launchCwd,
     home,
     allocId,
     replaceTabs,
-    markBooted,
+    markBooted: finishSpacesBoot,
     setActiveSpaceForNewTabs,
     adoptWorkspaceEnv,
   });
 
-  useSpacePersistence({
-    tabs,
-    activeId,
-    activeSpaceId: activeSpaceId ?? DEFAULT_SPACE_ID,
-    enabled: spacesHydrated,
+  const { flushNow: flushSpacePersistence, clearSnapshots } =
+    useSpacePersistence({
+      tabs,
+      activeId,
+      activeSpaceId: activeSpaceId ?? DEFAULT_SPACE_ID,
+      enabled: spacesHydrated && recoverySettled,
+    });
+
+  const discardRecoveredState = useCallback(async () => {
+    const state = useSpaces.getState();
+    await clearSnapshots(state.spaces.map((space) => space.id));
+    const active = state.spaces.find((space) => space.id === state.activeId);
+    const activeRootUnavailable = active
+      ? state.unavailableRootIds.includes(active.id)
+      : true;
+    clearWorkspaceState();
+    resetWorkspace(
+      !activeRootUnavailable && active?.root
+        ? active.root
+        : (home ?? undefined),
+    );
+  }, [clearSnapshots, clearWorkspaceState, home, resetWorkspace]);
+
+  const sessionRecovery = useSessionRecovery({
+    ready: spacesBootComplete,
+    restorationSucceeded: spacesHydrated,
+    onDiscard: discardRecoveredState,
   });
+
+  useEffect(() => {
+    if (!spacesBootComplete || !sessionRecovery.settled) return;
+    setRecoverySettled(true);
+    markBooted();
+  }, [markBooted, sessionRecovery.settled, spacesBootComplete]);
+
+  const browserTools = useBrowserTools(
+    activeWorkstation,
+    !spacesHydrated || !recoverySettled,
+  );
+
+  const activeWorkstationId = activeWorkstation?.id ?? null;
+  const activeWorkstationRoot = activeWorkstation?.root ?? null;
+  const activeWorkstationEnvKind = activeWorkstation?.env.kind ?? null;
+  useEffect(() => {
+    setAuthorizedAgentRoot(null);
+    setAgentPromptAvailability({});
+    setAgentContextError(null);
+
+    if (!spacesHydrated) {
+      setAgentContextLoading(true);
+      return;
+    }
+    if (
+      !activeWorkstationId ||
+      !activeWorkstationRoot ||
+      activeWorkstationEnvKind !== "local"
+    ) {
+      setAgentContextLoading(false);
+      if (activeWorkstationEnvKind && activeWorkstationEnvKind !== "local") {
+        setAgentContextError(
+          "Agent presets currently support Local workstations only.",
+        );
+      }
+      return;
+    }
+
+    let cancelled = false;
+    setAgentContextLoading(true);
+    void (async () => {
+      try {
+        const root = await native.workspaceAuthorize(activeWorkstationRoot);
+        const presets =
+          useSpaces
+            .getState()
+            .spaces.find(
+              (workstation) => workstation.id === activeWorkstationId,
+            )?.agentPresets ?? [];
+        const availabilityEntries = await Promise.all(
+          presets
+            .filter(
+              (preset): preset is typeof preset & { promptFile: string } =>
+                preset.promptFile !== null,
+            )
+            .map(async (preset) => {
+              try {
+                await resolveWorkstationFile({
+                  rootPath: root,
+                  relativePath: preset.promptFile,
+                });
+                return [preset.id, { available: true }] as const;
+              } catch (error) {
+                return [
+                  preset.id,
+                  {
+                    available: false,
+                    reason: `Prompt unavailable: ${String(error)}`,
+                  },
+                ] as const;
+              }
+            }),
+        );
+        if (cancelled) return;
+        setAuthorizedAgentRoot({ workstationId: activeWorkstationId, root });
+        setAgentPromptAvailability(
+          Object.fromEntries(availabilityEntries) as Partial<
+            Record<AfflowAgentPresetId, AgentPresetAvailability>
+          >,
+        );
+      } catch (error) {
+        if (cancelled) return;
+        setAgentContextError(
+          `Could not authorize workstation folder: ${String(error)}`,
+        );
+      } finally {
+        if (!cancelled) setAgentContextLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeWorkstationEnvKind,
+    activeWorkstationId,
+    activeWorkstationRoot,
+    spacesHydrated,
+  ]);
 
   const prevSpaceRef = useRef(activeSpaceId);
   useEffect(() => {
@@ -350,11 +576,12 @@ export default function App() {
   useEditorFileSync({ tabs, tabsRef, editorRefs });
   useThemeFileEditing({ tabsRef, openFileTab });
 
-  const { explorerRoot, inheritedCwdForNewTab } = useWorkspaceCwd(
+  const { explorerRoot, inheritedCwdForNewTab } = useWorkspaceCwd({
+    workstationId: activeWorkstation?.id ?? null,
+    workstationRoot: activeWorkstation?.root,
     activeTab,
-    tabs,
-    launchCwd ?? home,
-  );
+    fallbackRoot: launchCwd ?? home,
+  });
 
   useWindowTitle(activeTab, explorerRoot);
 
@@ -423,8 +650,36 @@ export default function App() {
     disposeTabs,
   });
 
-  const { pendingAppClose, confirmAppClose, cancelAppClose } =
-    useAppCloseGuard(tabsRef);
+  const saveAllEditors = useMemo(
+    () =>
+      createSaveAllCoordinator(async () => {
+        const result = await saveAllDirtyEditors(tabsRef.current, (id) =>
+          editorRefs.current.get(id),
+        );
+        return result.ok;
+      }),
+    [],
+  );
+
+  const prepareCleanExit = useCallback(async () => {
+    if (!recoverySettled) {
+      throw new Error("Resolve workspace recovery before quitting Afflow.");
+    }
+    await flushSpacePersistence();
+    await markSessionClean();
+  }, [flushSpacePersistence, recoverySettled]);
+
+  const {
+    pendingAppClose,
+    appCloseSaving,
+    appCloseSaveError,
+    saveAllAndClose,
+    confirmAppClose,
+    cancelAppClose,
+  } = useAppCloseGuard(tabsRef, {
+    saveAll: saveAllEditors,
+    prepareClose: prepareCleanExit,
+  });
 
   useEffect(() => {
     const live = new Set<number>();
@@ -577,6 +832,32 @@ export default function App() {
     newBlockTab(inheritedCwdForNewTab());
   }, [newBlockTab, inheritedCwdForNewTab]);
 
+  const agentCliAvailability = useMemo<
+    AgentPresetMenuConfig["cliAvailability"]
+  >(() => {
+    const byId = new Map(
+      agentCliDetections.map((detection) => [detection.id, detection]),
+    );
+    const availability = Object.fromEntries(
+      (["claude", "codex", "gemini", "opencode"] as const).map((id) => {
+        const detection = byId.get(id);
+        return [
+          id,
+          detection?.available
+            ? { available: true }
+            : {
+                available: false,
+                reason: agentCliError
+                  ? "CLI detection is unavailable."
+                  : `${id === "opencode" ? "OpenCode" : id[0].toUpperCase() + id.slice(1)} is not available on PATH.`,
+              },
+        ];
+      }),
+    ) as NonNullable<AgentPresetMenuConfig["cliAvailability"]>;
+    availability.custom = { available: true };
+    return availability;
+  }, [agentCliDetections, agentCliError]);
+
   const launchAgentGroup = useCallback(
     (request: AgentLaunchRequest) => {
       const command = validateAgentLaunchCommand(request.command);
@@ -614,6 +895,211 @@ export default function App() {
       }
     },
     [inheritedCwdForNewTab, newAgentGroupTab],
+  );
+
+  const updateAgentPreset = useCallback(
+    (presetId: AfflowAgentPresetId, update: AgentPresetUpdate) => {
+      const workstationId = useSpaces.getState().activeId;
+      if (!workstationId) return;
+      useSpaces.getState().updateAgentPreset(workstationId, presetId, update);
+    },
+    [],
+  );
+
+  const launchAgentPreset = useCallback(
+    (presetId: AfflowAgentPresetId) => {
+      const state = useSpaces.getState();
+      const workstation = state.spaces.find(
+        (candidate) => candidate.id === state.activeId,
+      );
+      const preset = workstation?.agentPresets.find(
+        (candidate) => candidate.id === presetId,
+      );
+      if (!workstation || !preset || workstation.env.kind !== "local") return;
+      if (
+        !authorizedAgentRoot ||
+        authorizedAgentRoot.workstationId !== workstation.id
+      ) {
+        toast.error("Workstation folder is not ready");
+        return;
+      }
+      if (
+        preset.promptFile &&
+        agentPromptAvailability[preset.id]?.available === false
+      ) {
+        toast.error("Preset prompt is unavailable", {
+          description: agentPromptAvailability[preset.id]?.reason,
+        });
+        return;
+      }
+      if (
+        preset.launcherId !== "custom" &&
+        !agentCliDetections.some(
+          (detection) =>
+            detection.id === preset.launcherId && detection.available,
+        )
+      ) {
+        toast.error("Selected command line tool is unavailable");
+        return;
+      }
+      const command = resolveWorkstationAgentCommand(
+        preset,
+        usePreferencesStore.getState().agentLaunchCommands,
+      );
+      if (!command.ok) {
+        toast.error("Agent command is invalid", {
+          description: command.error,
+        });
+        return;
+      }
+
+      const { leafIds: presetLeafIds } = newAgentGroupTab(
+        authorizedAgentRoot.root,
+        preset.name,
+        1,
+      );
+      const hooksReady =
+        preset.launcherId === "custom"
+          ? Promise.resolve()
+          : (() => {
+              const launcher = findAgentLauncher(preset.launcherId);
+              return launcher.supportsHooks
+                ? invoke("agent_enable_hooks", {
+                    agent: preset.launcherId,
+                  }).catch((error) => {
+                    console.warn(
+                      `[terax] could not enable ${preset.launcherId} notifications:`,
+                      error,
+                    );
+                  })
+                : Promise.resolve();
+            })();
+
+      for (const leafId of presetLeafIds) {
+        void (async () => {
+          await Promise.all([whenSessionReady(leafId), hooksReady]);
+          if (!writeToSession(leafId, `${command.command}\r`)) {
+            console.error(
+              `[afflow] agent terminal ${leafId} closed before launch`,
+            );
+          }
+        })();
+      }
+    },
+    [
+      agentCliDetections,
+      agentPromptAvailability,
+      authorizedAgentRoot,
+      newAgentGroupTab,
+    ],
+  );
+
+  const openAgentPrompt = useCallback(
+    async (presetId: AfflowAgentPresetId) => {
+      const state = useSpaces.getState();
+      const workstation = state.spaces.find(
+        (candidate) => candidate.id === state.activeId,
+      );
+      const preset = workstation?.agentPresets.find(
+        (candidate) => candidate.id === presetId,
+      );
+      if (
+        !workstation ||
+        !preset?.promptFile ||
+        !authorizedAgentRoot ||
+        authorizedAgentRoot.workstationId !== workstation.id
+      ) {
+        toast.error("Preset prompt is unavailable");
+        return;
+      }
+      try {
+        const resolved = await resolveWorkstationFile({
+          rootPath: authorizedAgentRoot.root,
+          relativePath: preset.promptFile,
+        });
+        newMarkdownTab(resolved.absolutePath);
+      } catch (error) {
+        toast.error("Could not open preset prompt", {
+          description: String(error),
+        });
+      }
+    },
+    [authorizedAgentRoot, newMarkdownTab],
+  );
+
+  const copyAgentStartupInstruction = useCallback(
+    async (presetId: AfflowAgentPresetId) => {
+      const state = useSpaces.getState();
+      const workstation = state.spaces.find(
+        (candidate) => candidate.id === state.activeId,
+      );
+      const preset = workstation?.agentPresets.find(
+        (candidate) => candidate.id === presetId,
+      );
+      const instruction = preset ? startupInstructionForPreset(preset) : null;
+      if (!instruction) return;
+      try {
+        await writeTerminalClipboard(instruction);
+        toast.success("Startup instruction copied");
+      } catch (error) {
+        toast.error("Could not copy startup instruction", {
+          description: String(error),
+        });
+      }
+    },
+    [],
+  );
+
+  const openAgentOutputs = useCallback(async () => {
+    const root = authorizedAgentRoot?.root;
+    if (!root) {
+      toast.error("Workstation folder is not ready");
+      return;
+    }
+    try {
+      await openPath(`${root.replace(/[\\/]+$/, "")}/outputs`);
+    } catch (error) {
+      toast.error("Could not open outputs folder", {
+        description: String(error),
+      });
+    }
+  }, [authorizedAgentRoot]);
+
+  const agentPresetMenu = useMemo<AgentPresetMenuConfig>(
+    () => ({
+      presets: activeWorkstation?.agentPresets ?? [],
+      cliAvailability: agentCliAvailability,
+      promptAvailability: agentPromptAvailability,
+      workstationRoot: rootForWorkstation(
+        authorizedAgentRoot,
+        activeWorkstation?.id,
+      ),
+      loading: !spacesHydrated || agentCliLoading || agentContextLoading,
+      error: agentCliError ?? agentContextError,
+      onUpdatePreset: updateAgentPreset,
+      onLaunch: launchAgentPreset,
+      onOpenPrompt: (presetId) => void openAgentPrompt(presetId),
+      onCopyStartupInstruction: (presetId) =>
+        void copyAgentStartupInstruction(presetId),
+      onOpenOutputs: () => void openAgentOutputs(),
+    }),
+    [
+      activeWorkstation?.agentPresets,
+      activeWorkstation?.id,
+      agentCliAvailability,
+      agentCliError,
+      agentCliLoading,
+      agentContextError,
+      agentContextLoading,
+      agentPromptAvailability,
+      authorizedAgentRoot,
+      copyAgentStartupInstruction,
+      launchAgentPreset,
+      openAgentOutputs,
+      openAgentPrompt,
+      spacesHydrated,
+      updateAgentPreset,
+    ],
   );
 
   const sendCd = useCallback(
@@ -916,6 +1402,18 @@ export default function App() {
       "view.zoomOut": zoomOut,
       "view.zoomReset": zoomReset,
       "view.zenMode": () => setZenMode((v) => !v),
+      "editor.save": () => {
+        const handle = editorRefs.current.get(activeId);
+        if (!handle) return;
+        void saveEditor(handle).then((saved) => {
+          if (!saved) toast.error("File could not be saved");
+        });
+      },
+      "editor.saveAll": () => {
+        void saveAllEditors().then((saved) => {
+          if (!saved) toast.error("Some files could not be saved");
+        });
+      },
       "editor.undo": () => editorRefs.current.get(activeId)?.undo(),
       "editor.redo": () => editorRefs.current.get(activeId)?.redo(),
       "editor.aiComplete": () =>
@@ -950,6 +1448,7 @@ export default function App() {
       zoomOut,
       zoomReset,
       activateAgentTarget,
+      saveAllEditors,
     ],
   );
 
@@ -960,14 +1459,7 @@ export default function App() {
           ? leafIds(activeTab.paneTree).length
           : null;
       if (shouldDisablePaneSwapShortcut(id, terminalPaneCount)) return true;
-      if (
-        id === "editor.undo" ||
-        id === "editor.redo" ||
-        id === "editor.aiComplete" ||
-        id === "editor.codeComplete"
-      ) {
-        return activeTab?.kind !== "editor";
-      }
+      if (shouldDisableEditorShortcut(id, activeTab?.kind ?? null)) return true;
       if (id === "ai.askSelection") {
         const target =
           (e.target as HTMLElement | null) ?? document.activeElement;
@@ -1007,7 +1499,7 @@ export default function App() {
       }
       return false;
     },
-    [activeTab],
+    [activeTab, captureActiveSelection],
   );
 
   useGlobalShortcuts(shortcutHandlers, { isDisabled: shortcutsDisabled });
@@ -1136,22 +1628,213 @@ export default function App() {
 
   const activeCwd = activeTerminalLeafCwd;
 
-  const handleNewSpace = useCallback(() => {
-    const { spaces, create, setActive } = useSpaces.getState();
-    const meta = create({
-      name: `Space ${spaces.length + 1}`,
-      root: activeCwd ?? home ?? null,
-      env: workspaceEnv,
-    });
-    setActiveSpaceForNewTabs(meta.id);
-    newTab(activeCwd ?? undefined);
-    setActive(meta.id);
-    return meta.id;
-  }, [activeCwd, home, workspaceEnv, newTab, setActiveSpaceForNewTabs]);
+  const registerWorkstation = useCallback(
+    async (id: string, name: string, root: string) => {
+      const canonicalRoot = await native.workspaceAuthorize(root);
+      const existingId = findWorkstationByRoot(
+        useSpaces.getState().spaces,
+        canonicalRoot,
+      );
+      if (existingId) {
+        useSpaces.getState().setActive(existingId);
+        toast.info("Workstation is already open");
+        return existingId;
+      }
 
-  const handleDeleteSpace = useCallback(
-    (id: string) => {
-      const nextSpaceId = useSpaces.getState().remove(id);
+      const meta = useSpaces.getState().create({
+        id,
+        name,
+        root: canonicalRoot,
+        env: { kind: "local" },
+      });
+      setActiveSpaceForNewTabs(meta.id);
+      const tabId = newTabInSpace(meta.id, canonicalRoot);
+      useSpaces.getState().setActive(meta.id);
+      setActiveId(tabId);
+      return meta.id;
+    },
+    [newTabInSpace, setActiveId, setActiveSpaceForNewTabs],
+  );
+
+  const chooseWorkstationDirectory = useCallback(
+    async (title: string): Promise<string | null> => {
+      const selected = await openDirectory({
+        directory: true,
+        multiple: false,
+        title,
+      });
+      return typeof selected === "string" ? selected : null;
+    },
+    [],
+  );
+
+  const handleCreateWorkstation = useCallback(async () => {
+    try {
+      const selected = await chooseWorkstationDirectory(
+        "Choose a folder for the new workstation",
+      );
+      if (!selected) return;
+      const canonicalRoot = await native.workspaceAuthorize(selected);
+      const existingId = findWorkstationByRoot(
+        useSpaces.getState().spaces,
+        canonicalRoot,
+      );
+      if (existingId) {
+        useSpaces.getState().setActive(existingId);
+        toast.info("Workstation is already open");
+        return;
+      }
+
+      const id = newWorkstationId();
+      const name = workstationNameFromRoot(canonicalRoot);
+      const report = await scaffoldWorkstation({
+        rootPath: canonicalRoot,
+        workstationId: id,
+        name,
+      });
+      await registerWorkstation(id, name, report.root);
+      toast.success("Workstation created", {
+        description: name,
+      });
+    } catch (error) {
+      toast.error("Could not create workstation", {
+        description: String(error),
+      });
+    }
+  }, [chooseWorkstationDirectory, registerWorkstation]);
+
+  const handleOpenExistingWorkstation = useCallback(async () => {
+    try {
+      const selected = await chooseWorkstationDirectory(
+        "Open folder as workstation",
+      );
+      if (!selected) return;
+      await registerWorkstation(
+        newWorkstationId(),
+        workstationNameFromRoot(selected),
+        selected,
+      );
+    } catch (error) {
+      toast.error("Could not open workstation", {
+        description: String(error),
+      });
+    }
+  }, [chooseWorkstationDirectory, registerWorkstation]);
+
+  const handleRelocateWorkstation = useCallback(
+    async (id: string) => {
+      const workstation = useSpaces
+        .getState()
+        .spaces.find((item) => item.id === id);
+      if (!workstation) return;
+      if (workstation.env.kind !== "local") {
+        toast.error(
+          "WSL workstation roots cannot be relocated with this picker",
+        );
+        return;
+      }
+      try {
+        const selected = await chooseWorkstationDirectory(
+          `Locate ${workstation.name}`,
+        );
+        if (!selected) return;
+        const root = await authorizeWorkstationRoot(selected, workstation.env);
+        const duplicate = findWorkstationByRoot(
+          useSpaces.getState().spaces.filter((item) => item.id !== id),
+          root,
+        );
+        if (duplicate) {
+          toast.error("That folder is already used by another workstation");
+          return;
+        }
+        const affected = tabsRef.current.filter((tab) => tab.spaceId === id);
+        if (affected.some((tab) => tab.kind === "editor" && tab.dirty)) {
+          toast.warning(
+            "Save or close edited files before changing the folder",
+          );
+          return;
+        }
+        const busy = await Promise.all(
+          affected
+            .filter((tab) => tab.kind === "terminal")
+            .flatMap((tab) => leafIds(tab.paneTree))
+            .map(leafHasForegroundProcess),
+        );
+        if (busy.some(Boolean)) {
+          toast.warning("Stop running processes before changing the folder");
+          return;
+        }
+        const restored = await restoreSavedSpaceTabs(id, root, allocId);
+        const removedIds = new Set(
+          tabsRef.current
+            .filter((tab) => tab.spaceId === id)
+            .map((tab) => tab.id),
+        );
+        for (const tabId of removedIds) {
+          editorRefs.current.delete(tabId);
+          previewRefs.current.delete(tabId);
+        }
+
+        await useSpaces.getState().setRoot(id, root);
+        useSpaces.getState().setActive(id);
+        setActiveSpaceForNewTabs(id);
+        const next = [
+          ...tabsRef.current.filter((tab) => tab.spaceId !== id),
+          ...restored.tabs,
+        ];
+        const index = Math.min(
+          Math.max(restored.activeTabIndex, 0),
+          restored.tabs.length - 1,
+        );
+        replaceTabs(next, restored.tabs[index].id);
+        toast.success("Workstation folder reconnected", {
+          description: workstation.name,
+        });
+      } catch (error) {
+        toast.error("Could not reconnect workstation folder", {
+          description: String(error),
+        });
+      }
+    },
+    [
+      allocId,
+      chooseWorkstationDirectory,
+      replaceTabs,
+      setActiveSpaceForNewTabs,
+    ],
+  );
+
+  const handleArchiveWorkstation = useCallback(
+    async (id: string) => {
+      const affected = () =>
+        tabsRef.current.filter((tab) => tab.spaceId === id);
+      const dirty = affected().filter(
+        (tab) => tab.kind === "editor" && tab.dirty,
+      );
+      if (dirty.length > 0) {
+        toast.warning("Save or close edited files before archiving", {
+          description: "Afflow will not discard unsaved workstation changes.",
+        });
+        return;
+      }
+
+      if (usePreferencesStore.getState().confirmCloseRunningTerminal) {
+        const terminalLeafIds = affected()
+          .filter((tab) => tab.kind === "terminal")
+          .flatMap((tab) => leafIds(tab.paneTree));
+        const running = await Promise.all(
+          terminalLeafIds.map(leafHasForegroundProcess),
+        );
+        if (running.some(Boolean)) {
+          toast.warning("Stop running processes before archiving", {
+            description:
+              "Afflow will not terminate active workstation processes silently.",
+          });
+          return;
+        }
+      }
+
+      const nextSpaceId = useSpaces.getState().archive(id);
       if (!nextSpaceId) return;
       const root = useSpaces
         .getState()
@@ -1206,8 +1889,8 @@ export default function App() {
       open={switcherOpen}
       onOpenChange={setSwitcherOpen}
       tabs={tabs}
-      onNewSpace={() => void handleNewSpace()}
-      onDeleteSpace={handleDeleteSpace}
+      onNewSpace={() => void handleCreateWorkstation()}
+      onDeleteSpace={(id) => void handleArchiveWorkstation(id)}
       onNewTabInSpace={handleNewTabInSpace}
       onJumpTab={jumpToTab}
       onCloseTab={handleClose}
@@ -1247,7 +1930,7 @@ export default function App() {
             spaces: useSpaces.getState().spaces,
             activeSpaceId,
             openSpacesOverview: () => setSwitcherOpen(true),
-            newSpace: () => void handleNewSpace(),
+            newSpace: () => void handleCreateWorkstation(),
             switchSpace: (id) => useSpaces.getState().setActive(id),
           })
         : [],
@@ -1271,7 +1954,7 @@ export default function App() {
       togglePanelAndFocus,
       askFromSelection,
       activeSpaceId,
-      handleNewSpace,
+      handleCreateWorkstation,
     ],
   );
 
@@ -1320,6 +2003,62 @@ export default function App() {
     },
     [openFileTab],
   );
+
+  const openTerminalFileReference = useCallback(
+    async ({ leafId, relativePath, line }: TerminalFileLinkTarget) => {
+      const tab = tabsRef.current.find(
+        (candidate) =>
+          candidate.kind === "terminal" && hasLeaf(candidate.paneTree, leafId),
+      );
+      const workstation = tab
+        ? useSpaces
+            .getState()
+            .spaces.find((candidate) => candidate.id === tab.spaceId)
+        : null;
+      if (!tab || !workstation?.root || workstation.env.kind !== "local") {
+        toast.error("File reference has no available workstation");
+        return;
+      }
+      try {
+        const root = await native.workspaceAuthorize(workstation.root);
+        const resolved = await resolveWorkstationFile({
+          rootPath: root,
+          relativePath,
+        });
+        const alreadyActive = useSpaces.getState().activeId === workstation.id;
+        if (!alreadyActive) {
+          useSpaces.getState().setActive(workstation.id);
+        }
+        if (
+          alreadyActive &&
+          line === undefined &&
+          isMarkdownPath(resolved.absolutePath)
+        ) {
+          newMarkdownTab(resolved.absolutePath);
+          return;
+        }
+        const id = openFileTab(resolved.absolutePath, true, {
+          spaceId: workstation.id,
+          activate: true,
+        });
+        if (line !== undefined) {
+          const editor = editorRefs.current.get(id);
+          if (editor) editor.gotoLine(line, { focus: true });
+          else pendingEditorNavigation.current.set(id, { line, focus: true });
+        }
+      } catch (error) {
+        toast.error("Could not open file reference", {
+          description: String(error),
+        });
+      }
+    },
+    [newMarkdownTab, openFileTab],
+  );
+
+  useEffect(() => {
+    setTerminalFileLinkHandler(openTerminalFileReference);
+    return () => setTerminalFileLinkHandler(null);
+  }, [openTerminalFileReference]);
 
   useControlBridge({
     ready: spacesHydrated && launchCwdResolved,
@@ -1373,6 +2112,8 @@ export default function App() {
               onNewEditor={() => setNewEditorOpen(true)}
               onNewGitGraph={openGitGraphFromContext}
               onLaunchAgents={launchAgentGroup}
+              agentPresets={agentPresetMenu}
+              browserTools={browserTools}
               onClose={handleClose}
               onCloseTabsToRight={handleCloseTabsToRight}
               onCloseOtherTabs={handleCloseOtherTabs}
@@ -1400,6 +2141,43 @@ export default function App() {
                 persistSidebarWidth(width, isUserInteraction);
               }}
             >
+              <ResizablePanel
+                id="workstations"
+                defaultSize="184px"
+                minSize="152px"
+                maxSize="260px"
+              >
+                <div className="h-full min-h-0 pl-2 pr-0.5">
+                  <div className="terax-pane h-full min-h-0 overflow-hidden">
+                    <WorkstationSidebar
+                      className="w-full border-r-0 bg-transparent"
+                      workstations={workstationSidebarItems}
+                      activeId={activeSpaceId}
+                      loading={!spacesHydrated}
+                      onOpenWorkstation={(id) =>
+                        useSpaces.getState().setActive(id)
+                      }
+                      onRelocateWorkstation={(id) =>
+                        void handleRelocateWorkstation(id)
+                      }
+                      onCreateWorkstation={() => void handleCreateWorkstation()}
+                      onOpenExistingWorkstation={() =>
+                        void handleOpenExistingWorkstation()
+                      }
+                      onRenameWorkstation={(id, name) =>
+                        useSpaces.getState().rename(id, name)
+                      }
+                      onReorderWorkstations={(ids) =>
+                        useSpaces.getState().reorder(ids)
+                      }
+                      onArchiveWorkstation={(id) =>
+                        void handleArchiveWorkstation(id)
+                      }
+                    />
+                  </div>
+                </div>
+              </ResizablePanel>
+              <ResizableHandle className="w-1 rounded-full bg-transparent transition-colors duration-[var(--dur-fast)] after:w-4 hover:bg-border" />
               <ResizablePanel
                 id="sidebar"
                 panelRef={sidebarRef}
@@ -1465,7 +2243,7 @@ export default function App() {
                 </div>
               </ResizablePanel>
               <ResizableHandle className="w-1 rounded-full bg-transparent transition-colors duration-[var(--dur-fast)] after:w-4 hover:bg-border" />
-              <ResizablePanel id="workspace" defaultSize="78%" minSize="30%">
+              <ResizablePanel id="workspace" defaultSize="58%" minSize="30%">
                 <div className="h-full min-h-0 pl-0.5 pr-2">
                   <div className="terax-pane flex h-full min-h-0 flex-col">
                     <div className="relative min-h-0 flex-1">
@@ -1577,8 +2355,6 @@ export default function App() {
             onCreated={(path) => openFileTab(path)}
           />
 
-          <UpdaterDialog />
-
           <CloseDialogs
             tabs={tabs}
             pendingCloseTab={pendingCloseTab}
@@ -1595,8 +2371,21 @@ export default function App() {
             onCancelCloseMany={cancelCloseMany}
             onConfirmCloseMany={confirmCloseMany}
             pendingAppClose={pendingAppClose}
+            appCloseSaving={appCloseSaving}
+            appCloseSaveError={appCloseSaveError}
+            onSaveAllAndClose={saveAllAndClose}
             onCancelAppClose={cancelAppClose}
             onConfirmAppClose={confirmAppClose}
+          />
+
+          <SessionRecoveryDialog
+            open={sessionRecovery.open}
+            kind={sessionRecovery.kind}
+            busy={sessionRecovery.busy}
+            error={sessionRecovery.error}
+            restorationFailed={sessionRecovery.restorationFailed}
+            onKeep={sessionRecovery.keepRecovered}
+            onDiscard={() => void sessionRecovery.discardRecovered()}
           />
         </div>
       </TooltipProvider>
