@@ -45,6 +45,7 @@ export type WorkstationSidebarProps = {
   error?: string | null;
   onRetry?: () => void;
   onOpenWorkstation: (id: string) => void;
+  onRelocateWorkstation?: (id: string) => void;
   onCreateWorkstation: () => void;
   onOpenExistingWorkstation: () => void;
   onRenameWorkstation: (id: string, name: string) => void;
@@ -90,6 +91,7 @@ export function WorkstationSidebar({
   error,
   onRetry,
   onOpenWorkstation,
+  onRelocateWorkstation,
   onCreateWorkstation,
   onOpenExistingWorkstation,
   onRenameWorkstation,
@@ -179,6 +181,11 @@ export function WorkstationSidebar({
                   last={index === workstations.length - 1}
                   renaming={renamingId === workstation.id}
                   onOpen={() => onOpenWorkstation(workstation.id)}
+                  onRelocate={
+                    onRelocateWorkstation
+                      ? () => onRelocateWorkstation(workstation.id)
+                      : undefined
+                  }
                   onStartRename={() => setRenamingId(workstation.id)}
                   onCommitRename={(name) => {
                     setRenamingId(null);
@@ -251,6 +258,7 @@ function WorkstationRow({
   last,
   renaming,
   onOpen,
+  onRelocate,
   onStartRename,
   onCommitRename,
   onCancelRename,
@@ -264,6 +272,7 @@ function WorkstationRow({
   last: boolean;
   renaming: boolean;
   onOpen: () => void;
+  onRelocate?: () => void;
   onStartRename: () => void;
   onCommitRename: (name: string) => void;
   onCancelRename: () => void;
@@ -338,7 +347,23 @@ function WorkstationRow({
       )}
 
       {!renaming ? (
-        <div className="absolute right-1 flex items-center rounded bg-accent/95 opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+        <div
+          className={cn(
+            "absolute right-1 flex items-center rounded bg-accent/95 opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100",
+            workstation.unavailable && "opacity-100",
+          )}
+        >
+          {onRelocate ? (
+            <RowIconButton
+              label={
+                workstation.unavailable
+                  ? "Locate workstation folder"
+                  : "Change workstation folder"
+              }
+              icon={FolderOpenIcon}
+              onClick={onRelocate}
+            />
+          ) : null}
           <RowIconButton
             label="Move workstation up"
             icon={ArrowUp01Icon}

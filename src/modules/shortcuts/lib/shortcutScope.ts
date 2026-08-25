@@ -9,6 +9,21 @@ function isPaneSwapShortcut(id: ShortcutId): boolean {
   );
 }
 
+export function shouldDisableEditorShortcut(
+  id: ShortcutId,
+  activeTabKind: string | null,
+): boolean {
+  return (
+    (id === "editor.save" ||
+      id === "editor.saveAll" ||
+      id === "editor.undo" ||
+      id === "editor.redo" ||
+      id === "editor.aiComplete" ||
+      id === "editor.codeComplete") &&
+    activeTabKind !== "editor"
+  );
+}
+
 export function shouldDisablePaneSwapShortcut(
   id: ShortcutId,
   terminalPaneCount: number | null,

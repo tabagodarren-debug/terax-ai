@@ -10,6 +10,8 @@
 
 pub mod detect;
 pub mod launch;
+pub mod macos;
+pub mod platform;
 pub mod profile;
 pub mod windows;
 
@@ -48,6 +50,9 @@ impl BrowserId {
         }
     }
 
+    /// The Windows `App Paths` registry key name. This is a registry key, not
+    /// the executable to launch: on macOS the executable is named by
+    /// [`platform::executable_name`] instead.
     pub fn exe_name(self) -> &'static str {
         match self {
             BrowserId::Chrome => "chrome.exe",
@@ -212,14 +217,21 @@ fn profile_base(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join(profile::PROFILE_BASE_DIR))
 }
 
-/// Production detection: registry App Paths, process environment, and the
-/// GUI-safe PATH lookup already used for language servers.
+/// Production detection for the host platform.
+///
+/// Windows draws on registry App Paths, the process environment, and the
+/// GUI-safe PATH lookup already used for language servers. macOS draws on the
+/// two `.app` locations plus the same PATH lookup; the registry and
+/// environment sources are simply unused there.
 fn detect_installed() -> Vec<BrowserDetection> {
+    let home = dirs::home_dir();
     detect::detect_with(
+        platform::Platform::host(),
         |browser| {
             detect::AppPathEntries::from_registry(windows::read_app_paths(browser.exe_name()))
         },
         |var| std::env::var(var).ok(),
+        home.as_deref(),
         crate::modules::lsp::env::resolve_binary,
         detect::verify_executable,
     )

@@ -1,5 +1,8 @@
+import {
+  browserProfileResetFeedback,
+  browserToolsNativeDemand,
+} from "@/modules/browser-tools/lib/useBrowserTools";
 import { describe, expect, it } from "vitest";
-import { browserToolsNativeDemand } from "@/modules/browser-tools/lib/useBrowserTools";
 
 describe("browserToolsNativeDemand", () => {
   it("does no native work until both stores are hydrated", () => {
@@ -46,5 +49,21 @@ describe("browserToolsNativeDemand", () => {
         autoOpenEnabled: true,
       }),
     ).toBe(true);
+  });
+});
+
+describe("browserProfileResetFeedback", () => {
+  it("reports a completed reset with no cleanup warning", () => {
+    expect(browserProfileResetFeedback(false)).toEqual({
+      notice: "Managed browser profile reset.",
+      warning: null,
+    });
+  });
+
+  it("keeps a successful reset distinct from pending old-data cleanup", () => {
+    const feedback = browserProfileResetFeedback(true);
+    expect(feedback.notice).toBe("Managed browser profile reset.");
+    expect(feedback.warning).toContain("new profile is ready");
+    expect(feedback.warning).toContain("before resetting this profile again");
   });
 });

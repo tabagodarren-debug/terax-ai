@@ -42,8 +42,11 @@ import { useBrowserTools } from "@/modules/browser-tools";
 import { CommandPalette, createCommandItems } from "@/modules/command-palette";
 import { useControlBridge } from "@/modules/control";
 import {
+  createSaveAllCoordinator,
   type EditorPaneHandle,
   NewEditorDialog,
+  saveAllDirtyEditors,
+  saveEditor,
   useApplyEditorFontSize,
   useEditorFileSync,
 } from "@/modules/editor";
@@ -56,12 +59,18 @@ import {
 } from "@/modules/header";
 import { setLspNavigator } from "@/modules/lsp";
 import type { PreviewPaneHandle } from "@/modules/preview";
+import {
+  markSessionClean,
+  SessionRecoveryDialog,
+  useSessionRecovery,
+} from "@/modules/recovery";
 import { openSettingsWindow } from "@/modules/settings/openSettingsWindow";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { setShowHidden } from "@/modules/settings/store";
 import {
   type ShortcutHandlers,
   type ShortcutId,
+  shouldDisableEditorShortcut,
   shouldDisablePaneSwapShortcut,
   useGlobalShortcuts,
 } from "@/modules/shortcuts";
@@ -77,8 +86,10 @@ import {
   useSourceControlContext,
 } from "@/modules/source-control";
 import {
+  authorizeWorkstationRoot,
   findWorkstationByRoot,
   newWorkstationId,
+  restoreSavedSpaceTabs,
   SpaceSwitcher,
   scaffoldWorkstation,
   useSpacePersistence,
@@ -257,14 +268,17 @@ export default function App() {
 
   const activeSpaceId = useSpaces((s) => s.activeId);
   const workstations = useSpaces((s) => s.spaces);
+  const unavailableRootIds = useSpaces((s) => s.unavailableRootIds);
   const spacesHydrated = useSpaces((s) => s.hydrated);
-  const activeWorkstation = useMemo(
-    () =>
-      workstations.find((workstation) => workstation.id === activeSpaceId) ??
+  const activeWorkstation = useMemo(() => {
+    const workstation =
+      workstations.find((item) => item.id === activeSpaceId) ??
       workstations[0] ??
-      null,
-    [activeSpaceId, workstations],
-  );
+      null;
+    return workstation && unavailableRootIds.includes(workstation.id)
+      ? { ...workstation, root: null }
+      : workstation;
+  }, [activeSpaceId, unavailableRootIds, workstations]);
   const [agentCliDetections, setAgentCliDetections] = useState<
     AgentCliDetection[]
   >([]);
@@ -305,16 +319,22 @@ export default function App() {
         name: workstation.name,
         root: workstation.root ?? "",
         color: accentFor(workstation),
-        unavailable: workstation.root === null,
+        unavailable:
+          workstation.root === null ||
+          unavailableRootIds.includes(workstation.id),
         unavailableReason:
-          workstation.root === null ? "No folder is configured" : undefined,
+          workstation.root === null
+            ? "No folder is configured"
+            : unavailableRootIds.includes(workstation.id)
+              ? "Folder was moved or is unavailable"
+              : undefined,
         archiveDisabled: workstations.length <= 1,
         archiveDisabledReason:
           workstations.length <= 1
             ? "At least one workstation is required"
             : undefined,
       })),
-    [workstations],
+    [unavailableRootIds, workstations],
   );
   const activeSpaceIdRef = useRef(activeSpaceId);
   useLayoutEffect(() => {
@@ -334,25 +354,60 @@ export default function App() {
     [switchWorkspace, activeSpaceId],
   );
 
+  const [spacesBootComplete, setSpacesBootComplete] = useState(false);
+  const [recoverySettled, setRecoverySettled] = useState(false);
+  const finishSpacesBoot = useCallback(() => setSpacesBootComplete(true), []);
+
   useSpacesBoot({
     ready: launchCwdResolved,
     launchCwd,
     home,
     allocId,
     replaceTabs,
-    markBooted,
+    markBooted: finishSpacesBoot,
     setActiveSpaceForNewTabs,
     adoptWorkspaceEnv,
   });
 
-  useSpacePersistence({
-    tabs,
-    activeId,
-    activeSpaceId: activeSpaceId ?? DEFAULT_SPACE_ID,
-    enabled: spacesHydrated,
+  const { flushNow: flushSpacePersistence, clearSnapshots } =
+    useSpacePersistence({
+      tabs,
+      activeId,
+      activeSpaceId: activeSpaceId ?? DEFAULT_SPACE_ID,
+      enabled: spacesHydrated && recoverySettled,
+    });
+
+  const discardRecoveredState = useCallback(async () => {
+    const state = useSpaces.getState();
+    await clearSnapshots(state.spaces.map((space) => space.id));
+    const active = state.spaces.find((space) => space.id === state.activeId);
+    const activeRootUnavailable = active
+      ? state.unavailableRootIds.includes(active.id)
+      : true;
+    clearWorkspaceState();
+    resetWorkspace(
+      !activeRootUnavailable && active?.root
+        ? active.root
+        : (home ?? undefined),
+    );
+  }, [clearSnapshots, clearWorkspaceState, home, resetWorkspace]);
+
+  const sessionRecovery = useSessionRecovery({
+    ready: spacesBootComplete,
+    restorationSucceeded: spacesHydrated,
+    onDiscard: discardRecoveredState,
   });
 
-  const browserTools = useBrowserTools(activeWorkstation, !spacesHydrated);
+  useEffect(() => {
+    if (!spacesBootComplete || !sessionRecovery.settled) return;
+    setRecoverySettled(true);
+    markBooted();
+  }, [markBooted, sessionRecovery.settled, spacesBootComplete]);
+
+  const browserTools = useBrowserTools(
+    activeWorkstation,
+    !spacesHydrated || !recoverySettled,
+  );
 
   const activeWorkstationId = activeWorkstation?.id ?? null;
   const activeWorkstationRoot = activeWorkstation?.root ?? null;
@@ -595,8 +650,36 @@ export default function App() {
     disposeTabs,
   });
 
-  const { pendingAppClose, confirmAppClose, cancelAppClose } =
-    useAppCloseGuard(tabsRef);
+  const saveAllEditors = useMemo(
+    () =>
+      createSaveAllCoordinator(async () => {
+        const result = await saveAllDirtyEditors(tabsRef.current, (id) =>
+          editorRefs.current.get(id),
+        );
+        return result.ok;
+      }),
+    [],
+  );
+
+  const prepareCleanExit = useCallback(async () => {
+    if (!recoverySettled) {
+      throw new Error("Resolve workspace recovery before quitting Afflow.");
+    }
+    await flushSpacePersistence();
+    await markSessionClean();
+  }, [flushSpacePersistence, recoverySettled]);
+
+  const {
+    pendingAppClose,
+    appCloseSaving,
+    appCloseSaveError,
+    saveAllAndClose,
+    confirmAppClose,
+    cancelAppClose,
+  } = useAppCloseGuard(tabsRef, {
+    saveAll: saveAllEditors,
+    prepareClose: prepareCleanExit,
+  });
 
   useEffect(() => {
     const live = new Set<number>();
@@ -1319,6 +1402,18 @@ export default function App() {
       "view.zoomOut": zoomOut,
       "view.zoomReset": zoomReset,
       "view.zenMode": () => setZenMode((v) => !v),
+      "editor.save": () => {
+        const handle = editorRefs.current.get(activeId);
+        if (!handle) return;
+        void saveEditor(handle).then((saved) => {
+          if (!saved) toast.error("File could not be saved");
+        });
+      },
+      "editor.saveAll": () => {
+        void saveAllEditors().then((saved) => {
+          if (!saved) toast.error("Some files could not be saved");
+        });
+      },
       "editor.undo": () => editorRefs.current.get(activeId)?.undo(),
       "editor.redo": () => editorRefs.current.get(activeId)?.redo(),
       "editor.aiComplete": () =>
@@ -1353,6 +1448,7 @@ export default function App() {
       zoomOut,
       zoomReset,
       activateAgentTarget,
+      saveAllEditors,
     ],
   );
 
@@ -1363,14 +1459,7 @@ export default function App() {
           ? leafIds(activeTab.paneTree).length
           : null;
       if (shouldDisablePaneSwapShortcut(id, terminalPaneCount)) return true;
-      if (
-        id === "editor.undo" ||
-        id === "editor.redo" ||
-        id === "editor.aiComplete" ||
-        id === "editor.codeComplete"
-      ) {
-        return activeTab?.kind !== "editor";
-      }
+      if (shouldDisableEditorShortcut(id, activeTab?.kind ?? null)) return true;
       if (id === "ai.askSelection") {
         const target =
           (e.target as HTMLElement | null) ?? document.activeElement;
@@ -1410,7 +1499,7 @@ export default function App() {
       }
       return false;
     },
-    [activeTab],
+    [activeTab, captureActiveSelection],
   );
 
   useGlobalShortcuts(shortcutHandlers, { isDisabled: shortcutsDisabled });
@@ -1631,6 +1720,89 @@ export default function App() {
       });
     }
   }, [chooseWorkstationDirectory, registerWorkstation]);
+
+  const handleRelocateWorkstation = useCallback(
+    async (id: string) => {
+      const workstation = useSpaces
+        .getState()
+        .spaces.find((item) => item.id === id);
+      if (!workstation) return;
+      if (workstation.env.kind !== "local") {
+        toast.error(
+          "WSL workstation roots cannot be relocated with this picker",
+        );
+        return;
+      }
+      try {
+        const selected = await chooseWorkstationDirectory(
+          `Locate ${workstation.name}`,
+        );
+        if (!selected) return;
+        const root = await authorizeWorkstationRoot(selected, workstation.env);
+        const duplicate = findWorkstationByRoot(
+          useSpaces.getState().spaces.filter((item) => item.id !== id),
+          root,
+        );
+        if (duplicate) {
+          toast.error("That folder is already used by another workstation");
+          return;
+        }
+        const affected = tabsRef.current.filter((tab) => tab.spaceId === id);
+        if (affected.some((tab) => tab.kind === "editor" && tab.dirty)) {
+          toast.warning(
+            "Save or close edited files before changing the folder",
+          );
+          return;
+        }
+        const busy = await Promise.all(
+          affected
+            .filter((tab) => tab.kind === "terminal")
+            .flatMap((tab) => leafIds(tab.paneTree))
+            .map(leafHasForegroundProcess),
+        );
+        if (busy.some(Boolean)) {
+          toast.warning("Stop running processes before changing the folder");
+          return;
+        }
+        const restored = await restoreSavedSpaceTabs(id, root, allocId);
+        const removedIds = new Set(
+          tabsRef.current
+            .filter((tab) => tab.spaceId === id)
+            .map((tab) => tab.id),
+        );
+        for (const tabId of removedIds) {
+          editorRefs.current.delete(tabId);
+          previewRefs.current.delete(tabId);
+        }
+
+        await useSpaces.getState().setRoot(id, root);
+        useSpaces.getState().setActive(id);
+        setActiveSpaceForNewTabs(id);
+        const next = [
+          ...tabsRef.current.filter((tab) => tab.spaceId !== id),
+          ...restored.tabs,
+        ];
+        const index = Math.min(
+          Math.max(restored.activeTabIndex, 0),
+          restored.tabs.length - 1,
+        );
+        replaceTabs(next, restored.tabs[index].id);
+        toast.success("Workstation folder reconnected", {
+          description: workstation.name,
+        });
+      } catch (error) {
+        toast.error("Could not reconnect workstation folder", {
+          description: String(error),
+        });
+      }
+    },
+    [
+      allocId,
+      chooseWorkstationDirectory,
+      replaceTabs,
+      setActiveSpaceForNewTabs,
+    ],
+  );
 
   const handleArchiveWorkstation = useCallback(
     async (id: string) => {
@@ -1985,6 +2157,9 @@ export default function App() {
                       onOpenWorkstation={(id) =>
                         useSpaces.getState().setActive(id)
                       }
+                      onRelocateWorkstation={(id) =>
+                        void handleRelocateWorkstation(id)
+                      }
                       onCreateWorkstation={() => void handleCreateWorkstation()}
                       onOpenExistingWorkstation={() =>
                         void handleOpenExistingWorkstation()
@@ -2196,8 +2371,21 @@ export default function App() {
             onCancelCloseMany={cancelCloseMany}
             onConfirmCloseMany={confirmCloseMany}
             pendingAppClose={pendingAppClose}
+            appCloseSaving={appCloseSaving}
+            appCloseSaveError={appCloseSaveError}
+            onSaveAllAndClose={saveAllAndClose}
             onCancelAppClose={cancelAppClose}
             onConfirmAppClose={confirmAppClose}
+          />
+
+          <SessionRecoveryDialog
+            open={sessionRecovery.open}
+            kind={sessionRecovery.kind}
+            busy={sessionRecovery.busy}
+            error={sessionRecovery.error}
+            restorationFailed={sessionRecovery.restorationFailed}
+            onKeep={sessionRecovery.keepRecovered}
+            onDiscard={() => void sessionRecovery.discardRecovered()}
           />
         </div>
       </TooltipProvider>

@@ -1,16 +1,21 @@
 import { createDefaultWorkstationAgentPresets } from "@/modules/agents/lib/presets";
-import { native } from "@/modules/ai/lib/native";
 import { createDefaultWorkstationBrowserState } from "@/modules/browser-tools/lib/browserState";
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import type { Tab } from "@/modules/tabs";
 import { DEFAULT_SPACE_ID } from "@/modules/tabs/lib/useTabs";
-import { isLeaf, type PaneNode } from "@/modules/terminal/lib/panes";
 import { parseWorkspaceScopeKey, type WorkspaceEnv } from "@/modules/workspace";
 import { useEffect, useRef } from "react";
 import { activeSpaceEnv, freshTabCwd } from "./activeSpace";
 import { freshTerminalTab, hydrateTabs } from "./serialize";
-import { loadAll, type SpaceMeta, saveActiveId, saveSpacesList } from "./store";
+import {
+  loadAll,
+  type SpaceMeta,
+  saveActiveId,
+  saveSpacesList,
+  setSpaceStatePersistenceBlocked,
+} from "./store";
 import { useSpaces } from "./useSpaces";
+import { authorizeWorkstationRoot } from "./workstationNative";
 
 type Params = {
   ready: boolean;
@@ -23,17 +28,45 @@ type Params = {
   adoptWorkspaceEnv: (env: WorkspaceEnv) => Promise<string | null>;
 };
 
-function uniqueCwds(tabs: Tab[]): string[] {
-  const set = new Set<string>();
-  const walk = (n: PaneNode) => {
-    if (isLeaf(n)) {
-      if (n.cwd) set.add(n.cwd);
-      return;
-    }
-    for (const c of n.children) walk(c);
+export async function authorizeSavedRoots(
+  spaces: readonly SpaceMeta[],
+): Promise<Map<string, string>> {
+  const roots = new Map<string, string>();
+  await Promise.all(
+    spaces.map(async (space) => {
+      if (!space.root) return;
+      try {
+        await authorizeWorkstationRoot(space.root, space.env);
+        roots.set(space.id, space.root);
+      } catch {
+        // Keep the device mapping intact so the user can relocate it later.
+      }
+    }),
+  );
+  for (const space of spaces) {
+    setSpaceStatePersistenceBlocked(space.id, !roots.has(space.id));
+  }
+  return roots;
+}
+
+export async function restoreSavedSpaceTabs(
+  spaceId: string,
+  root: string,
+  allocId: () => number,
+): Promise<{ tabs: Tab[]; activeTabIndex: number }> {
+  const { states } = await loadAll();
+  const state = states.get(spaceId);
+  if (!state) {
+    return {
+      tabs: [freshTerminalTab(spaceId, root, allocId)],
+      activeTabIndex: 0,
+    };
+  }
+  const tabs = hydrateTabs(state.tabs, spaceId, root, allocId);
+  return {
+    tabs: tabs.length > 0 ? tabs : [freshTerminalTab(spaceId, root, allocId)],
+    activeTabIndex: tabs.length > 0 ? state.activeTabIndex : 0,
   };
-  for (const t of tabs) if (t.kind === "terminal") walk(t.paneTree);
-  return [...set];
 }
 
 export function useSpacesBoot({
@@ -82,11 +115,19 @@ export function useSpacesBoot({
           return;
         }
 
+        const authorizedRoots = await authorizeSavedRoots(spaces);
         const restored: Tab[] = [];
         for (const space of spaces) {
           const st = states.get(space.id);
           if (!st) continue;
-          restored.push(...hydrateTabs(st.tabs, space.id, allocId));
+          restored.push(
+            ...hydrateTabs(
+              st.tabs,
+              space.id,
+              authorizedRoots.get(space.id) ?? null,
+              allocId,
+            ),
+          );
         }
 
         const active =
@@ -103,18 +144,21 @@ export function useSpacesBoot({
 
         // Active space must never be empty, else its tab list shows nothing.
         if (!restored.some((t) => t.spaceId === active)) {
-          const cwd = freshTabCwd(env, restoredHome, launchCwd, home);
+          const cwd =
+            authorizedRoots.get(active) ??
+            freshTabCwd(env, restoredHome, launchCwd, home);
           restored.push(freshTerminalTab(active, cwd, allocId));
         }
-
-        await Promise.allSettled(
-          uniqueCwds(restored).map((cwd) => native.workspaceAuthorize(cwd)),
-        );
 
         const initialActiveIndex: Record<string, number> = {};
         for (const [id, st] of states)
           initialActiveIndex[id] = st.activeTabIndex;
-        useSpaces.getState().hydrate(spaces, active, initialActiveIndex);
+        const unavailableRootIds = spaces
+          .filter((space) => !space.root || !authorizedRoots.has(space.id))
+          .map((space) => space.id);
+        useSpaces
+          .getState()
+          .hydrate(spaces, active, initialActiveIndex, unavailableRootIds);
 
         const inActive = restored.filter((t) => t.spaceId === active);
         const idx = states.get(active)?.activeTabIndex ?? 0;

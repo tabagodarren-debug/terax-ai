@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "app.afflow.desktop",
   "build": {
-    "beforeDevCommand": "pnpm build:cli:dev && pnpm dev",
+    "beforeDevCommand": "corepack pnpm build:cli:dev && corepack pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build:cli && pnpm build",
+    "beforeBuildCommand": "corepack pnpm build:cli && corepack pnpm build",
     "frontendDist": "../dist",
     "removeUnusedCommands": true
   },

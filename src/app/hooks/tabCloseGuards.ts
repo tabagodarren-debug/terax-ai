@@ -56,7 +56,15 @@ export async function evaluateCloseHazards(
   }
   let checkedLeafIds = capture().leafIds;
   for (let pass = 0; pass < MAX_HAZARD_PASSES; pass += 1) {
-    const checks = await Promise.all(checkedLeafIds.map(isBusy));
+    const checks = await Promise.all(
+      checkedLeafIds.map(async (leafId) => {
+        try {
+          return await isBusy(leafId);
+        } catch {
+          return true;
+        }
+      }),
+    );
     const latest = capture();
     if (sameIds(checkedLeafIds, latest.leafIds)) {
       return {

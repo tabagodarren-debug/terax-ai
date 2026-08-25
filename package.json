@@ -14,6 +14,7 @@
     "dev": "vite",
     "dev:inspect": "INSPECT=true vite",
     "build": "tsc && vite build",
+    "package:windows": "tauri build --bundles nsis --no-sign",
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run",

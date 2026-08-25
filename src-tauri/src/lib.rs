@@ -1,8 +1,8 @@
 pub mod modules;
 
 use modules::{
-    agent, agent_presets, browser, control, fs, git, history, lsp, net, pty, secrets, shell,
-    vibrancy, workspace, workstation,
+    agent, agent_presets, browser, control, fs, git, history, lsp, net, pty, secrets, session,
+    shell, vibrancy, workspace, workstation,
 };
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -206,6 +206,9 @@ pub fn run() {
         )
         .plugin(tauri_plugin_opener::init())
         .setup(move |_app| {
+            let session_state = session::SessionState::initialize(_app.handle())
+                .map_err(std::io::Error::other)?;
+            _app.manage(session_state);
             if let Err(error) = control::start(_app.handle().clone(), control_for_setup.clone()) {
                 log::warn!("could not start Afflow control server: {error}");
             }
@@ -321,6 +324,9 @@ pub fn run() {
             browser::browser_launch,
             browser::browser_profile_open_folder,
             browser::browser_profile_reset,
+            session::session_acknowledge_recovery,
+            session::session_mark_clean,
+            session::session_startup_status,
             control::control_frontend_ready,
             control::control_respond,
             get_launch_dir,

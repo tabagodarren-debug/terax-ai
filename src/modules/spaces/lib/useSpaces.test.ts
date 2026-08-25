@@ -4,13 +4,17 @@ const persistence = vi.hoisted(() => ({
   deleteSpaceData: vi.fn(),
   saveActiveId: vi.fn(),
   saveSpacesList: vi.fn(),
+  flushStore: vi.fn(),
+  setSpaceStatePersistenceBlocked: vi.fn(),
 }));
 
 vi.mock("./store", () => ({
   deleteSpaceData: persistence.deleteSpaceData,
+  flushStore: persistence.flushStore,
   newSpaceId: vi.fn(() => "sp-generated"),
   saveActiveId: persistence.saveActiveId,
   saveSpacesList: persistence.saveSpacesList,
+  setSpaceStatePersistenceBlocked: persistence.setSpaceStatePersistenceBlocked,
 }));
 
 import { createDefaultWorkstationAgentPresets } from "@/modules/agents/lib/presets";
@@ -43,10 +47,13 @@ describe("useSpaces", () => {
     persistence.deleteSpaceData.mockReset().mockResolvedValue(undefined);
     persistence.saveActiveId.mockReset().mockResolvedValue(undefined);
     persistence.saveSpacesList.mockReset().mockResolvedValue(undefined);
+    persistence.flushStore.mockReset().mockResolvedValue(undefined);
+    persistence.setSpaceStatePersistenceBlocked.mockReset();
     useSpaces.setState({
       spaces: [],
       activeId: null,
       hydrated: false,
+      unavailableRootIds: [],
       initialActiveIndex: {},
     });
   });
@@ -95,11 +102,11 @@ describe("useSpaces", () => {
     ).toThrow("Workstation id already exists: a");
   });
 
-  it("renames, changes roots, and reorders without changing ids", () => {
+  it("renames, changes roots, and reorders without changing ids", async () => {
     useSpaces.getState().hydrate([space("a"), space("b")], "a");
 
     useSpaces.getState().rename("a", "  Renamed  ");
-    useSpaces.getState().setRoot("a", "D:\\moved");
+    await useSpaces.getState().setRoot("a", "D:\\moved");
     useSpaces.getState().reorder(["b", "a"]);
 
     expect(useSpaces.getState().spaces.map((item) => item.id)).toEqual([
@@ -111,6 +118,28 @@ describe("useSpaces", () => {
       name: "Renamed",
       root: "D:\\moved",
     });
+    expect(persistence.setSpaceStatePersistenceBlocked).toHaveBeenCalledWith(
+      "a",
+      false,
+    );
+  });
+
+  it("tracks unavailable roots until the device mapping is replaced", async () => {
+    useSpaces
+      .getState()
+      .hydrate(
+        [space("available"), space("missing", "C:\\missing")],
+        "available",
+        {},
+        ["missing"],
+      );
+
+    expect(useSpaces.getState().unavailableRootIds).toEqual(["missing"]);
+    await useSpaces.getState().setRoot("missing", "D:\\relocated");
+    expect(useSpaces.getState().unavailableRootIds).toEqual([]);
+
+    await useSpaces.getState().setRoot("available", null);
+    expect(useSpaces.getState().unavailableRootIds).toEqual(["available"]);
   });
 
   it("archives only metadata and selects the adjacent workstation", () => {

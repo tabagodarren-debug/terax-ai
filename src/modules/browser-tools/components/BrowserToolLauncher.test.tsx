@@ -1,5 +1,7 @@
-import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import {
+  normalizeBrowserToolDraft,
+  validateBrowserToolDraft,
+} from "@/modules/browser-tools/components/BrowserToolDialog";
 import {
   BrowserToolLauncher,
   type BrowserToolLauncherProps,
@@ -7,10 +9,8 @@ import {
   isCurrentBrowserLauncherContext,
   moveBrowserToolIds,
 } from "@/modules/browser-tools/components/BrowserToolLauncher";
-import {
-  normalizeBrowserToolDraft,
-  validateBrowserToolDraft,
-} from "@/modules/browser-tools/components/BrowserToolDialog";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
 
 const tools = [
   {
@@ -49,6 +49,7 @@ function props(
     onRemoveTool: vi.fn(),
     onReorderTools: vi.fn(),
     onOpenOnWorkstationLaunchChange: vi.fn(),
+    onRetry: vi.fn(),
     onOpenProfileFolder: vi.fn(),
     onResetProfile: vi.fn(),
     ...overrides,
@@ -233,6 +234,10 @@ describe("BrowserToolLauncher", () => {
       expect(html).toContain(expected);
       expect(html).toContain(`aria-label="${resetLabel}"`);
       expect(html).toContain("disabled");
+      if (activity !== "error") {
+        expect(html).toContain("Open folder");
+        expect(html).toContain("Retry");
+      }
     },
   );
 
@@ -252,6 +257,7 @@ describe("BrowserToolLauncher", () => {
       <BrowserToolLauncher
         {...props({
           error: "The browser could not launch.",
+          warning: "Old profile cleanup is still pending.",
           notice: "Browser window opened.",
         })}
       />,
@@ -259,6 +265,7 @@ describe("BrowserToolLauncher", () => {
     expect(html).toContain('role="alert"');
     expect(html).toContain('role="status"');
     expect(html).toContain("The browser could not launch.");
+    expect(html).toContain("Old profile cleanup is still pending.");
     expect(html).toContain("Browser window opened.");
   });
 });

@@ -10,7 +10,7 @@ import {
 import type { WorkstationBrowserState } from "@/modules/browser-tools/lib/types";
 import type { WorkspaceEnv } from "@/modules/workspace";
 import { LazyStore } from "@tauri-apps/plugin-store";
-import type { SerializedTab } from "./serialize";
+import { migrateSerializedTabs, type SerializedTab } from "./serialize";
 
 export type SpaceMeta = {
   id: string;
@@ -30,17 +30,19 @@ export type SpaceState = {
   activeTabIndex: number;
 };
 
-export const SPACE_STORE_SCHEMA_VERSION = 3;
+export const SPACE_STORE_SCHEMA_VERSION = 4;
 
 const STORE_PATH = "terax-spaces.json";
 const KEY_SCHEMA_VERSION = "schemaVersion";
 const KEY_SPACES = "spaces";
+const KEY_DEVICE_ROOTS = "deviceRoots";
 const KEY_ACTIVE = "activeId";
 const STATE_PREFIX = "state:";
 const stateKey = (id: string) => `${STATE_PREFIX}${id}`;
 
 const store = new LazyStore(STORE_PATH, { defaults: {}, autoSave: 500 });
 let writesAllowed = true;
+const blockedStatePersistence = new Set<string>();
 
 export type LoadedSpaces = {
   spaces: SpaceMeta[];
@@ -64,7 +66,21 @@ function isWorkspaceEnv(value: unknown): value is WorkspaceEnv {
   );
 }
 
-function migrateSpace(value: unknown): SpaceMeta | null {
+function deviceRootsFrom(value: unknown): Map<string, string> {
+  const roots = new Map<string, string>();
+  if (!value || typeof value !== "object" || Array.isArray(value)) return roots;
+  for (const [id, root] of Object.entries(value as Record<string, unknown>)) {
+    if (id.length > 0 && typeof root === "string" && root.trim().length > 0) {
+      roots.set(id, root);
+    }
+  }
+  return roots;
+}
+
+function migrateSpace(
+  value: unknown,
+  deviceRoots: ReadonlyMap<string, string>,
+): SpaceMeta | null {
   if (!value || typeof value !== "object") return null;
   const raw = value as Record<string, unknown>;
   if (
@@ -72,7 +88,9 @@ function migrateSpace(value: unknown): SpaceMeta | null {
     raw.id.length === 0 ||
     typeof raw.name !== "string" ||
     raw.name.length === 0 ||
-    (raw.root !== null && typeof raw.root !== "string") ||
+    (raw.root !== undefined &&
+      raw.root !== null &&
+      typeof raw.root !== "string") ||
     !isWorkspaceEnv(raw.env) ||
     typeof raw.createdAt !== "number" ||
     !Number.isFinite(raw.createdAt) ||
@@ -84,7 +102,11 @@ function migrateSpace(value: unknown): SpaceMeta | null {
   return {
     id: raw.id,
     name: raw.name,
-    root: raw.root,
+    root:
+      deviceRoots.get(raw.id) ??
+      (typeof raw.root === "string" && raw.root.trim().length > 0
+        ? raw.root
+        : null),
     env: raw.env,
     agentPresets: normalizeWorkstationAgentPresets(raw.agentPresets),
     browser: normalizeWorkstationBrowserState(
@@ -121,6 +143,7 @@ function hasCanonicalPresets(
 export function migratePersistedSpaces(
   value: unknown,
   storedVersion: unknown,
+  rawDeviceRoots?: unknown,
 ): MigrationResult {
   const canWrite =
     typeof storedVersion !== "number" ||
@@ -133,10 +156,11 @@ export function migratePersistedSpaces(
   }
 
   const seen = new Set<string>();
+  const deviceRoots = deviceRootsFrom(rawDeviceRoots);
   const spaces: SpaceMeta[] = [];
   const sources: Record<string, unknown>[] = [];
   for (const record of value) {
-    const space = migrateSpace(record);
+    const space = migrateSpace(record, deviceRoots);
     if (!space || seen.has(space.id)) continue;
     seen.add(space.id);
     spaces.push(space);
@@ -150,6 +174,10 @@ export function migratePersistedSpaces(
         spaces.length !== value.length ||
         spaces.some(
           (space, index) =>
+            Object.keys(sources[index]).includes("root") ||
+            (space.root === null
+              ? deviceRoots.has(space.id)
+              : deviceRoots.get(space.id) !== space.root) ||
             !hasCanonicalPresets(
               sources[index]?.agentPresets,
               space.agentPresets,
@@ -166,20 +194,57 @@ export async function loadAll(): Promise<LoadedSpaces> {
   const entries = await store.entries();
   let rawSpaces: unknown = [];
   let storedVersion: unknown;
+  let rawDeviceRoots: unknown;
   let activeId: string | null = null;
-  const states = new Map<string, SpaceState>();
+  const rawStates = new Map<string, unknown>();
   for (const [k, v] of entries) {
     if (k === KEY_SCHEMA_VERSION) storedVersion = v;
     else if (k === KEY_SPACES) rawSpaces = v;
+    else if (k === KEY_DEVICE_ROOTS) rawDeviceRoots = v;
     else if (k === KEY_ACTIVE) activeId = typeof v === "string" ? v : null;
     else if (k.startsWith(STATE_PREFIX)) {
-      states.set(k.slice(STATE_PREFIX.length), v as SpaceState);
+      rawStates.set(k.slice(STATE_PREFIX.length), v);
     }
   }
-  const migrated = migratePersistedSpaces(rawSpaces, storedVersion);
+  const migrated = migratePersistedSpaces(
+    rawSpaces,
+    storedVersion,
+    rawDeviceRoots,
+  );
   writesAllowed =
     typeof storedVersion !== "number" ||
     storedVersion <= SPACE_STORE_SCHEMA_VERSION;
+  const roots = new Map(migrated.spaces.map((space) => [space.id, space.root]));
+  const states = new Map<string, SpaceState>();
+  const stateWrites: Array<[string, SpaceState]> = [];
+  for (const [id, value] of rawStates) {
+    const raw =
+      value && typeof value === "object"
+        ? (value as Record<string, unknown>)
+        : {};
+    const migratedTabs = migrateSerializedTabs(raw.tabs, roots.get(id) ?? null);
+    const oldIndex =
+      typeof raw.activeTabIndex === "number" &&
+      Number.isInteger(raw.activeTabIndex) &&
+      raw.activeTabIndex >= 0
+        ? raw.activeTabIndex
+        : 0;
+    const mappedIndex = migratedTabs.sourceIndexes.indexOf(oldIndex);
+    const activeTabIndex =
+      mappedIndex >= 0
+        ? mappedIndex
+        : Math.min(oldIndex, Math.max(0, migratedTabs.tabs.length - 1));
+    const state = { tabs: migratedTabs.tabs, activeTabIndex };
+    states.set(id, state);
+    if (
+      migratedTabs.needsWrite ||
+      raw.activeTabIndex !== activeTabIndex ||
+      Object.keys(raw).some((key) => key !== "tabs" && key !== "activeTabIndex")
+    ) {
+      stateWrites.push([id, state]);
+    }
+  }
+  for (const [id, state] of stateWrites) await saveState(id, state);
   if (migrated.needsWrite) {
     await saveSpacesList(migrated.spaces);
   }
@@ -188,7 +253,14 @@ export async function loadAll(): Promise<LoadedSpaces> {
 
 export async function saveSpacesList(spaces: SpaceMeta[]): Promise<void> {
   if (!writesAllowed) return;
-  await store.set(KEY_SPACES, spaces);
+  const deviceRoots = Object.fromEntries(
+    spaces.flatMap((space) =>
+      space.root === null ? [] : [[space.id, space.root]],
+    ),
+  );
+  const portableSpaces = spaces.map(({ root: _root, ...space }) => space);
+  await store.set(KEY_DEVICE_ROOTS, deviceRoots);
+  await store.set(KEY_SPACES, portableSpaces);
   await store.set(KEY_SCHEMA_VERSION, SPACE_STORE_SCHEMA_VERSION);
 }
 
@@ -202,9 +274,29 @@ export async function saveState(id: string, state: SpaceState): Promise<void> {
   await store.set(stateKey(id), state);
 }
 
+export async function flushStore(): Promise<void> {
+  if (!writesAllowed) {
+    throw new Error("Spaces store is read-only because it uses a newer schema");
+  }
+  await store.save();
+}
+
 export async function deleteSpaceData(id: string): Promise<void> {
+  blockedStatePersistence.delete(id);
   if (!writesAllowed) return;
   await store.delete(stateKey(id));
+}
+
+export function setSpaceStatePersistenceBlocked(
+  id: string,
+  blocked: boolean,
+): void {
+  if (blocked) blockedStatePersistence.add(id);
+  else blockedStatePersistence.delete(id);
+}
+
+export function isSpaceStatePersistenceBlocked(id: string): boolean {
+  return blockedStatePersistence.has(id);
 }
 
 export function newSpaceId(): string {

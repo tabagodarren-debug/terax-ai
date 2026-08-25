@@ -24,6 +24,18 @@ import { toast } from "sonner";
 type BrowserView = BrowserToolLauncherProps["browser"];
 type ProfileView = BrowserToolLauncherProps["profile"];
 
+export function browserProfileResetFeedback(cleanupPending: boolean): {
+  notice: string;
+  warning: string | null;
+} {
+  return {
+    notice: "Managed browser profile reset.",
+    warning: cleanupPending
+      ? "The new profile is ready, but Afflow could not remove all old profile data. Close the managed browser before resetting this profile again."
+      : null,
+  };
+}
+
 export function browserToolsNativeDemand({
   preferencesHydrated,
   spacesLoading,
@@ -72,6 +84,7 @@ export function useBrowserTools(
   const [pendingAction, setPendingAction] =
     useState<BrowserToolLauncherPendingAction | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [browserRefreshVersion, setBrowserRefreshVersion] = useState(0);
@@ -194,6 +207,7 @@ export function useBrowserTools(
   useEffect(() => {
     void contextKey;
     setError(null);
+    setWarning(null);
     setNotice(null);
     setPendingAction(null);
   }, [contextKey]);
@@ -206,16 +220,19 @@ export function useBrowserTools(
   const runNative = useCallback(
     async (
       action: BrowserToolLauncherPendingAction,
-      operation: () => Promise<string>,
+      operation: () => Promise<
+        string | { notice: string; warning?: string | null }
+      >,
     ) => {
       const startedIn = contextKey;
       setPendingAction(action);
       setError(null);
       setNotice(null);
       try {
-        const message = await operation();
+        const result = await operation();
         if (contextKeyRef.current === startedIn) {
-          setNotice(message);
+          setNotice(typeof result === "string" ? result : result.notice);
+          if (typeof result !== "string") setWarning(result.warning ?? null);
           setProfileRefreshVersion((value) => value + 1);
         }
       } catch (operationError) {
@@ -225,6 +242,9 @@ export function useBrowserTools(
         }
         if (contextKeyRef.current === startedIn) {
           setError(message);
+          if (action === "launch-all" || action.startsWith("launch-tool:")) {
+            setProfileRefreshVersion((value) => value + 1);
+          }
         }
       } finally {
         if (contextKeyRef.current === startedIn) setPendingAction(null);
@@ -333,6 +353,7 @@ export function useBrowserTools(
       profile,
       loading: effectiveLoading,
       error,
+      warning,
       notice,
       pendingAction,
       maxTools: MAX_BROWSER_TOOLS,
@@ -391,6 +412,7 @@ export function useBrowserTools(
         });
       },
       onResetProfile: () => {
+        setWarning(null);
         void runNative("reset-profile", async () => {
           const request = currentRequest();
           const result = await resetBrowserProfile({
@@ -398,12 +420,7 @@ export function useBrowserTools(
             profileId: request.profileId,
             confirmed: true,
           });
-          if (result.cleanupPending) {
-            throw new Error(
-              "The profile was reset, but old data cleanup is still pending.",
-            );
-          }
-          return "Managed browser profile reset.";
+          return browserProfileResetFeedback(result.cleanupPending);
         });
       },
       className: "max-h-[min(680px,calc(100vh-32px))]",
@@ -417,6 +434,7 @@ export function useBrowserTools(
       launchUrls,
       mutate,
       notice,
+      warning,
       pendingAction,
       profile,
       refresh,

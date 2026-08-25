@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::windows::{is_link_like, probe_lockfile, remove_tree_no_follow, LockProbe};
+use super::platform::{is_link_like, probe_profile_lock, remove_tree_no_follow, LockProbe};
 use super::{BrowserId, ProfileActivity};
 use crate::modules::fs::to_canon;
 use crate::modules::workstation::iso_time::iso8601_utc;
@@ -34,9 +34,6 @@ pub const PROFILE_BASE_DIR: &str = "browser-profiles";
 pub const USER_DATA_DIR: &str = "user-data";
 pub const MARKER_FILE: &str = ".afflow-profile.json";
 pub const MARKER_SCHEMA_VERSION: u32 = 1;
-/// Chromium's per-profile ProcessSingleton file.
-const LOCK_FILE: &str = "lockfile";
-
 const MAX_PROFILE_ID_LEN: usize = 64;
 
 /// Windows device names are unusable as directories regardless of charset.
@@ -357,8 +354,11 @@ pub fn activity_from(probe: LockProbe, has_live_child: bool) -> ProfileActivity 
     }
 }
 
+/// Probes the host's Chromium lock for this profile. The lock file's name and
+/// locking mechanism are platform-specific, so both are chosen in
+/// `platform.rs` rather than here.
 pub fn probe_activity(user_data: &Path, has_live_child: bool) -> ProfileActivity {
-    activity_from(probe_lockfile(&user_data.join(LOCK_FILE)), has_live_child)
+    activity_from(probe_profile_lock(user_data), has_live_child)
 }
 
 /// Read-only status. Never creates a directory or a marker: a profile that has
@@ -582,7 +582,7 @@ mod tests {
         validate_profile_id, ProfileMarker, ResetOps, MARKER_FILE, MARKER_SCHEMA_VERSION,
         USER_DATA_DIR,
     };
-    use crate::modules::browser::windows::LockProbe;
+    use crate::modules::browser::platform::LockProbe;
     use crate::modules::browser::{BrowserId, ProfileActivity};
     use std::io;
     use std::path::{Path, PathBuf};
@@ -1594,5 +1594,149 @@ mod tests {
         let names = names.borrow();
         let unique: std::collections::HashSet<&PathBuf> = names.iter().collect();
         assert_eq!(unique.len(), names.len(), "quarantine names collided");
+    }
+
+    // ---- macOS SingletonLock end to end ---------------------------------
+    //
+    // The activity mapping and the reset rules are already asserted on every
+    // host through `activity_from` and `reset_with`. What only a Mac can prove
+    // is that a real Chromium-shaped `flock` on `SingletonLock` reaches those
+    // rules through `probe_activity` and `reset`.
+
+    #[cfg(target_os = "macos")]
+    mod macos_singleton_lock {
+        use super::{base, ensure_container, reset, status, NOW};
+        use crate::modules::browser::profile::probe_activity;
+        use crate::modules::browser::{BrowserId, ProfileActivity};
+        use std::fs::File;
+        use std::os::fd::AsRawFd;
+        use std::path::{Path, PathBuf};
+
+        const LOCK_CONTENTS: &[u8] = b"afflow-host-4321";
+
+        fn managed_user_data(base: &Path) -> PathBuf {
+            ensure_container(base, BrowserId::Chrome, "shared-v1", NOW)
+                .unwrap()
+                .user_data
+        }
+
+        fn write_singleton_lock(user_data: &Path) -> PathBuf {
+            let lock = user_data.join("SingletonLock");
+            std::fs::write(&lock, LOCK_CONTENTS).unwrap();
+            lock
+        }
+
+        fn hold_exclusive(path: &Path) -> File {
+            let file = File::options().read(true).write(true).open(path).unwrap();
+            let taken = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            assert_eq!(taken, 0, "the test could not hold the lock it needs");
+            file
+        }
+
+        #[test]
+        fn a_held_singleton_lock_reports_active_and_refuses_reset() {
+            let (_tmp, base) = base();
+            let user_data = managed_user_data(&base);
+            let lock = write_singleton_lock(&user_data);
+            let held = hold_exclusive(&lock);
+
+            // No tracked child: this is a browser Afflow did not spawn, or one
+            // that outlived an Afflow restart. Only the lock proves it is live.
+            let activity = probe_activity(&user_data, false);
+            assert_eq!(activity, ProfileActivity::Active);
+
+            let err =
+                reset(&base, BrowserId::Chrome, "shared-v1", true, activity, NOW).unwrap_err();
+            assert!(
+                err.contains("close this browser"),
+                "unexpected error: {err}"
+            );
+
+            // The browser was never signalled and its lock was never removed,
+            // renamed, truncated, or repaired.
+            assert!(lock.exists());
+            assert_eq!(std::fs::read(&lock).unwrap(), LOCK_CONTENTS);
+            drop(held);
+        }
+
+        #[test]
+        fn status_reports_active_while_the_lock_is_held() {
+            let (_tmp, base) = base();
+            let user_data = managed_user_data(&base);
+            let held = hold_exclusive(&write_singleton_lock(&user_data));
+
+            let reported = status(&base, BrowserId::Chrome, "shared-v1", false).unwrap();
+            assert_eq!(reported.activity, ProfileActivity::Active);
+            assert!(reported.exists);
+            drop(held);
+        }
+
+        #[test]
+        fn a_leftover_unlocked_singleton_lock_reports_idle_and_resets() {
+            // Exactly the state after a Chromium crash, or after Afflow was
+            // restarted while the browser had already exited: the file is
+            // still there, but nobody holds it.
+            let (_tmp, base) = base();
+            let user_data = managed_user_data(&base);
+            let lock = write_singleton_lock(&user_data);
+            std::fs::write(user_data.join("Cookies"), b"session").unwrap();
+
+            let activity = probe_activity(&user_data, false);
+            assert_eq!(activity, ProfileActivity::Idle);
+
+            let outcome =
+                reset(&base, BrowserId::Chrome, "shared-v1", true, activity, NOW).unwrap();
+            assert!(outcome.reset);
+
+            // User data really was cleared, and Chromium's file went with it
+            // as ordinary profile content, never as a repair step.
+            assert!(user_data.is_dir());
+            assert!(!lock.exists());
+            assert!(!user_data.join("Cookies").exists());
+        }
+
+        #[test]
+        fn a_profile_that_never_launched_has_no_lock_and_resets_cleanly() {
+            let (_tmp, base) = base();
+            let user_data = managed_user_data(&base);
+            assert!(!user_data.join("SingletonLock").exists());
+
+            let activity = probe_activity(&user_data, false);
+            assert_eq!(activity, ProfileActivity::Idle);
+            assert!(
+                reset(&base, BrowserId::Chrome, "shared-v1", true, activity, NOW)
+                    .unwrap()
+                    .reset
+            );
+        }
+
+        #[test]
+        fn a_tracked_child_reports_active_even_before_the_lock_appears() {
+            // Chromium creates SingletonLock a moment after launch. A tracked
+            // child is proof on its own, so the window in between is never
+            // reported as idle.
+            let (_tmp, base) = base();
+            let user_data = managed_user_data(&base);
+            assert!(!user_data.join("SingletonLock").exists());
+
+            assert_eq!(probe_activity(&user_data, true), ProfileActivity::Active);
+        }
+
+        #[test]
+        fn a_symlinked_singleton_lock_is_unknown_and_reset_refuses() {
+            let (_tmp, base) = base();
+            let user_data = managed_user_data(&base);
+            let outside = user_data.parent().unwrap().join("elsewhere");
+            std::fs::write(&outside, b"keep me").unwrap();
+            std::os::unix::fs::symlink(&outside, user_data.join("SingletonLock")).unwrap();
+
+            let activity = probe_activity(&user_data, false);
+            assert_eq!(activity, ProfileActivity::Unknown);
+
+            let err =
+                reset(&base, BrowserId::Chrome, "shared-v1", true, activity, NOW).unwrap_err();
+            assert!(err.contains("cannot confirm"), "unexpected error: {err}");
+            assert_eq!(std::fs::read(&outside).unwrap(), b"keep me");
+        }
     }
 }

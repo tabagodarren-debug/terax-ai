@@ -78,6 +78,7 @@ export type BrowserToolLauncherProps = {
   profile: BrowserToolLauncherProfile;
   loading?: boolean;
   error?: string | null;
+  warning?: string | null;
   notice?: string | null;
   pendingAction?: BrowserToolLauncherPendingAction | null;
   maxTools?: number;
@@ -138,6 +139,7 @@ export function BrowserToolLauncher({
   profile,
   loading = false,
   error,
+  warning,
   notice,
   pendingAction,
   maxTools = 16,
@@ -298,7 +300,16 @@ export function BrowserToolLauncher({
             onOpenBrowserSettings={onOpenBrowserSettings}
           />
         ) : null}
+        {profile.activity === "active" || profile.activity === "unknown" ? (
+          <ProfileRecovery
+            profile={profile}
+            operationPending={operationPending}
+            onRetry={onRetry}
+            onOpenProfileFolder={onOpenProfileFolder}
+          />
+        ) : null}
         {error ? <FeedbackMessage kind="error" message={error} /> : null}
+        {warning ? <FeedbackMessage kind="warning" message={warning} /> : null}
         {notice ? <FeedbackMessage kind="success" message={notice} /> : null}
 
         <div className="flex min-h-0 flex-1 flex-col">
@@ -561,25 +572,81 @@ function ProfileStatus({ profile }: { profile: BrowserToolLauncherProfile }) {
   );
 }
 
+function ProfileRecovery({
+  profile,
+  operationPending,
+  onRetry,
+  onOpenProfileFolder,
+}: {
+  profile: BrowserToolLauncherProfile;
+  operationPending: boolean;
+  onRetry?: () => void;
+  onOpenProfileFolder: () => void;
+}) {
+  const active = profile.activity === "active";
+  return (
+    <div
+      role="alert"
+      className="border-b border-amber-500/25 bg-amber-500/5 px-3 py-2.5"
+    >
+      <p className="text-[11px] font-medium text-foreground">
+        {active ? "Managed profile is in use" : "Profile activity is unknown"}
+      </p>
+      <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">
+        {active
+          ? "Close every window using this managed profile, then retry the check."
+          : "Afflow could not verify that the managed browser is closed. Retry before resetting it."}
+      </p>
+      <div className="mt-1.5 flex gap-1">
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          className="rounded-md"
+          disabled={operationPending}
+          onClick={onOpenProfileFolder}
+        >
+          <HugeiconsIcon icon={FolderOpenIcon} size={11} strokeWidth={2} /> Open
+          folder
+        </Button>
+        {onRetry ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            className="rounded-md"
+            disabled={operationPending}
+            onClick={onRetry}
+          >
+            <HugeiconsIcon icon={RefreshIcon} size={11} strokeWidth={2} /> Retry
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function FeedbackMessage({
   kind,
   message,
 }: {
-  kind: "error" | "success";
+  kind: "error" | "warning" | "success";
   message: string;
 }) {
   return (
     <div
-      role={kind === "error" ? "alert" : "status"}
+      role={kind === "success" ? "status" : "alert"}
       className={cn(
         "flex items-start gap-2 border-b px-3 py-2 text-[10px] leading-4",
         kind === "error"
           ? "border-destructive/20 bg-destructive/5 text-destructive"
-          : "border-border/60 bg-primary/5 text-foreground",
+          : kind === "warning"
+            ? "border-amber-500/25 bg-amber-500/5 text-foreground"
+            : "border-border/60 bg-primary/5 text-foreground",
       )}
     >
       <HugeiconsIcon
-        icon={kind === "error" ? Alert02Icon : CheckmarkCircle02Icon}
+        icon={kind === "success" ? CheckmarkCircle02Icon : Alert02Icon}
         size={13}
         strokeWidth={2}
         className="mt-0.5 shrink-0"

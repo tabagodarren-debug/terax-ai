@@ -130,6 +130,7 @@ describe("WorkstationSidebar", () => {
             },
           ],
           activeId: null,
+          onRelocateWorkstation: vi.fn(),
         })}
       />,
     );
@@ -142,5 +143,6 @@ describe("WorkstationSidebar", () => {
     expect(error).toContain("Retry");
     expect(unavailable).toContain("Folder was moved");
     expect(unavailable).toContain("disabled");
+    expect(unavailable).toContain('aria-label="Locate workstation folder"');
   });
 });

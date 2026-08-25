@@ -24,10 +24,12 @@ import { parseWorkspaceScopeKey, type WorkspaceEnv } from "@/modules/workspace";
 import { create } from "zustand";
 import {
   deleteSpaceData,
+  flushStore,
   newSpaceId,
   type SpaceMeta,
   saveActiveId,
   saveSpacesList,
+  setSpaceStatePersistenceBlocked,
 } from "./store";
 
 export type CreateInput = {
@@ -47,6 +49,7 @@ type State = {
   spaces: SpaceMeta[];
   activeId: string | null;
   hydrated: boolean;
+  unavailableRootIds: string[];
   // Per-space active tab index loaded from disk, so persistence preserves it
   // for spaces the user never visits this session.
   initialActiveIndex: Record<string, number>;
@@ -54,10 +57,11 @@ type State = {
     spaces: SpaceMeta[],
     activeId: string | null,
     initialActiveIndex?: Record<string, number>,
+    unavailableRootIds?: string[],
   ) => void;
   create: (input: CreateInput) => SpaceMeta;
   rename: (id: string, name: string) => void;
-  setRoot: (id: string, root: string | null) => void;
+  setRoot: (id: string, root: string | null) => Promise<void>;
   setEnv: (id: string, env: WorkspaceEnv) => void;
   setColor: (id: string, color: number | undefined) => void;
   reorder: (orderedIds: string[]) => void;
@@ -100,9 +104,15 @@ export const useSpaces = create<State>((set, get) => ({
   spaces: [],
   activeId: null,
   hydrated: false,
+  unavailableRootIds: [],
   initialActiveIndex: {},
 
-  hydrate: (spaces, activeId, initialActiveIndex = {}) => {
+  hydrate: (
+    spaces,
+    activeId,
+    initialActiveIndex = {},
+    unavailableRootIds = [],
+  ) => {
     const restoredActiveId = spaces.some((space) => space.id === activeId)
       ? activeId
       : (spaces[0]?.id ?? null);
@@ -110,6 +120,7 @@ export const useSpaces = create<State>((set, get) => ({
       spaces,
       activeId: restoredActiveId,
       initialActiveIndex,
+      unavailableRootIds,
       hydrated: true,
     });
   },
@@ -137,7 +148,12 @@ export const useSpaces = create<State>((set, get) => ({
       updatedAt: now,
     };
     const spaces = [...get().spaces, meta];
-    set({ spaces });
+    set({
+      spaces,
+      unavailableRootIds: input.root
+        ? get().unavailableRootIds.filter((item) => item !== id)
+        : [...get().unavailableRootIds, id],
+    });
     void saveSpacesList(spaces);
     return meta;
   },
@@ -156,14 +172,21 @@ export const useSpaces = create<State>((set, get) => ({
     void saveSpacesList(spaces);
   },
 
-  setRoot: (id, root) => {
+  setRoot: async (id, root) => {
     const current = get().spaces;
     if (!current.some((space) => space.id === id)) return;
     const spaces = current.map((space) =>
       space.id === id ? { ...space, root, updatedAt: Date.now() } : space,
     );
-    set({ spaces });
-    void saveSpacesList(spaces);
+    await saveSpacesList(spaces);
+    await flushStore();
+    set({
+      spaces,
+      unavailableRootIds: root
+        ? get().unavailableRootIds.filter((item) => item !== id)
+        : [...new Set([...get().unavailableRootIds, id])],
+    });
+    setSpaceStatePersistenceBlocked(id, root === null);
   },
 
   setEnv: (id, env) => {
@@ -443,7 +466,12 @@ export const useSpaces = create<State>((set, get) => ({
     }
     const initialActiveIndex = { ...prev.initialActiveIndex };
     delete initialActiveIndex[id];
-    set({ spaces, activeId, initialActiveIndex });
+    set({
+      spaces,
+      activeId,
+      initialActiveIndex,
+      unavailableRootIds: prev.unavailableRootIds.filter((item) => item !== id),
+    });
     void saveSpacesList(spaces);
     void deleteSpaceData(id);
     if (activeId !== prev.activeId) void saveActiveId(activeId);

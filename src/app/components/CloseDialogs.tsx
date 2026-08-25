@@ -35,6 +35,9 @@ type Props = {
   onCancelCloseMany: () => void;
   onConfirmCloseMany: () => void;
   pendingAppClose: AppCloseBlocker | null;
+  appCloseSaving?: boolean;
+  appCloseSaveError?: string | null;
+  onSaveAllAndClose?: () => void;
   onCancelAppClose: () => void;
   onConfirmAppClose: () => void;
 };
@@ -49,6 +52,9 @@ function appCloseMessage(blocker: AppCloseBlocker): string {
   }
   if (blocker.dirtyEditors > 0) {
     return `${dirty.charAt(0).toUpperCase()}${dirty.slice(1)}. Quitting will discard them.`;
+  }
+  if (!blocker.busyTerminal) {
+    return "Afflow could not finish saving the workspace state. Quitting now may show recovery on the next launch.";
   }
   return "A process is still running in a terminal. Quitting will terminate it.";
 }
@@ -133,6 +139,9 @@ export function CloseDialogs({
   onCancelCloseMany,
   onConfirmCloseMany,
   pendingAppClose,
+  appCloseSaving = false,
+  appCloseSaveError,
+  onSaveAllAndClose,
   onCancelAppClose,
   onConfirmAppClose,
 }: Props) {
@@ -299,13 +308,38 @@ export function CloseDialogs({
               onCheckedChange={setOptOutAppClose}
             />
           ) : null}
+          {appCloseSaveError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {appCloseSaveError}
+            </p>
+          ) : null}
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={cancelAppClose}>
+            <AlertDialogCancel
+              disabled={appCloseSaving}
+              onClick={cancelAppClose}
+            >
               Cancel
             </AlertDialogCancel>
-            <AlertDialogAction onClick={() => void confirmAppClose()}>
-              Quit Anyway
+            <AlertDialogAction
+              variant="destructive"
+              disabled={appCloseSaving}
+              onClick={() => void confirmAppClose()}
+            >
+              {pendingAppClose?.dirtyEditors
+                ? "Quit Without Saving"
+                : "Quit Anyway"}
             </AlertDialogAction>
+            {(pendingAppClose?.dirtyEditors ?? 0) > 0 && onSaveAllAndClose ? (
+              <AlertDialogAction
+                disabled={appCloseSaving}
+                onClick={(event) => {
+                  event.preventDefault();
+                  onSaveAllAndClose();
+                }}
+              >
+                {appCloseSaving ? "Saving..." : "Save All and Quit"}
+              </AlertDialogAction>
+            ) : null}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

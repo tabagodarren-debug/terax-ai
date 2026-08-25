@@ -560,6 +560,8 @@ You create production-ready image-to-video prompts for AI media tools.
 
 **Exit criterion:** the app and its launched browser profile can complete a product-to-video-prompt session without losing workstation context.
 
+**Implementation status:** crash recovery, durable close handling, portable workstation-relative state, missing-root relocation, keyboard save/close guards, macOS browser detection and lock probing, and an unsigned Windows NSIS packaging workflow are implemented. macOS CI and physical MacBook acceptance, signed-in browser persistence, representative upload/download, and sustained multi-terminal performance remain acceptance work.
+
 ### Phase 5: Afflow Cloud Sync (After MVP)
 
 - Create a dedicated Supabase project for GitHub authentication, metadata, private object storage, realtime notifications, and transactional sync operations
@@ -774,7 +776,7 @@ Expose status values for `disabled`, `scanning`, `uploading`, `downloading`, `up
 - [x] Add shared and per-workstation Afflow browser profiles
 - [x] Add saved website launchers and structured browser launching
 - [x] Restore the last active workstation
-- [ ] Package a Windows development build
+- [x] Package a Windows development build
 
 ### P1 — Should Have
 
@@ -782,10 +784,10 @@ Expose status values for `disabled`, `scanning`, `uploading`, `downloading`, `up
 - [ ] Duplicate workstation
 - [ ] Drag file path into terminals
 - [x] Browser executable override and validation
-- [ ] Crash/unclean-shutdown recovery
+- [x] Crash/unclean-shutdown recovery
 - [x] Confirmed Afflow browser-profile reset
 - [ ] Config export/import without credentials
-- [ ] Keyboard shortcuts
+- [x] Keyboard shortcuts
 
 ### P2 — Later
 
