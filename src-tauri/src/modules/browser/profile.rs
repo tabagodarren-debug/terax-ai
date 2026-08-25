@@ -1147,15 +1147,17 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_lockfile_reads_as_idle() {
+    fn a_missing_lock_file_respects_host_support() {
         let (_tmp, base) = base();
         let paths = ensure_container(&base, BrowserId::Chrome, "shared-v1", NOW).unwrap();
-        assert!(!paths.user_data.join("lockfile").exists());
 
-        assert_eq!(
-            super::probe_activity(&paths.user_data, false),
+        let expected = if cfg!(any(windows, target_os = "macos")) {
             ProfileActivity::Idle
-        );
+        } else {
+            ProfileActivity::Unknown
+        };
+
+        assert_eq!(super::probe_activity(&paths.user_data, false), expected);
     }
 
     #[cfg(windows)]
