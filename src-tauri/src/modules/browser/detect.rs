@@ -582,6 +582,13 @@ mod tests {
     fn temp_exe(dir: &Path, name: &str) -> PathBuf {
         let path = dir.join(name);
         std::fs::write(&path, b"stub").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+            permissions.set_mode(permissions.mode() | 0o111);
+            std::fs::set_permissions(&path, permissions).unwrap();
+        }
         path
     }
 
