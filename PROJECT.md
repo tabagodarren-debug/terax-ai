@@ -90,7 +90,7 @@ Do not build these yet:
 - TikTok or Shopee scraping that bypasses access controls
 - CAPTCHA solving or anti-bot evasion
 - A proprietary AI-agent backend
-- Multi-user collaboration or cloud synchronization
+- Multi-user collaboration; personal Afflow Cloud synchronization is planned after the current MVP phases
 - Revenue analytics and attribution
 - Full video editing
 - Automated medical or disease-treatment claims
@@ -552,9 +552,7 @@ You create production-ready image-to-video prompts for AI media tools.
 - Browser launch and profile-lock recovery
 - Confirmed Afflow browser-profile reset
 - Add macOS Chrome and Edge detection and native acceptance coverage
-- Add device-local root mappings for portable workstation metadata
-- Add opt-in synchronization through a user-selected cloud-synced folder
-- Sync workstation files and declarative configuration, never browser profiles, cookies, secrets, CLI authentication, executable paths, or live terminal state
+- Add device-local root mappings and portable relative-path metadata required by the later Afflow Cloud phase
 - Keyboard shortcuts
 - Unsaved file protection
 - Packaging and Windows installer
@@ -562,7 +560,18 @@ You create production-ready image-to-video prompts for AI media tools.
 
 **Exit criterion:** the app and its launched browser profile can complete a product-to-video-prompt session without losing workstation context.
 
-### Phase 5: Product Workspace (After MVP)
+### Phase 5: Afflow Cloud Sync (After MVP)
+
+- Create a dedicated Supabase project for GitHub authentication, metadata, private object storage, realtime notifications, and transactional sync operations
+- Add end-to-end encrypted, opt-in synchronization for personal accounts
+- Synchronize portable workstation files, declarative configuration, and resumable UI state between Windows and macOS
+- Add active-device leases, guarded handoff, offline conflict preservation, and 30-day version recovery
+- Keep browser profiles, cookies, secrets, CLI authentication, executable paths, AI conversations, and live terminal state device-local
+- Deliver and verify the first complete Windows-to-Apple-Silicon handoff before expanding the engine
+
+**Exit criterion:** a saved workstation can be handed off from Windows to an Apple Silicon Mac and restored with matching portable files and practical UI state, without exposing plaintext workspace data to the cloud or synchronizing device credentials.
+
+### Phase 6: Product Workspace (After MVP)
 
 Only after the base workflow is stable:
 
@@ -578,7 +587,178 @@ Possible status flow:
 Saved → Researching → Scripting → Review → Generating → Editing → Ready → Published
 ```
 
-## 15. Initial Development Backlog
+## 15. Afflow Cloud Sync Plan
+
+Implement this plan only after the current MVP phases are complete and stable.
+
+### 15.1 Product Scope
+
+Afflow Cloud Sync is a personal, cross-device continuation system for Windows and macOS. It synchronizes saved workstation files and enough declarative UI state to continue work on another device. It is not multi-user collaboration, remote process migration, browser-session transfer, or a general backup of all device state.
+
+Approved first-release decisions:
+
+- Use a dedicated project in the existing Supabase Pro organization
+- Authenticate with GitHub OAuth using PKCE and a native localhost callback
+- Support personal accounts only; invitations and team workspaces remain out of scope
+- Enable sync explicitly per workstation
+- Target Windows and an unsigned local Apple Silicon macOS 13+ development build
+- Use GitHub Actions for Windows/macOS checks plus a physical MacBook smoke test
+- Prove a complete Windows-to-Mac vertical slice before expanding the feature
+
+### 15.2 Cloud Architecture
+
+Supabase provides authentication, Postgres metadata, private object storage, realtime change notifications, and Edge Functions or transactional RPCs. The desktop application must never contain a Supabase service-role credential.
+
+Cloud records store only account ownership, opaque workspace and revision IDs, ciphertext sizes, timestamps, usage, device registration, and lease metadata. Filenames, paths, workspace names, saved URLs, layouts, and file contents are encrypted before upload.
+
+Required backend components:
+
+- Private encrypted-object bucket with immutable object names derived from ciphertext hashes
+- Device registry with platform, display name, public signing key, last-seen time, and revocation state
+- Workspace registry with owner, current revision, usage, and active-device lease
+- Immutable revision records with parent revision, encrypted manifest reference, author device, and signature
+- Transactional operations for lease claim/heartbeat/release and compare-and-swap revision commits
+- Signed upload/download authorization, quota enforcement, and scheduled garbage collection
+- Row-level security proving that one account cannot read or mutate another account's records or objects
+
+The client keeps a local SQLite sync journal under app-local data. It records fingerprints, pending transfers, resumable operation state, the last accepted revision, and device-local root mappings. This journal is never synchronized.
+
+### 15.3 Encryption and Recovery
+
+- Generate a 24-word recovery phrase for the account encryption root
+- Store recovery material, OAuth refresh tokens, and private device keys only in Windows Credential Manager or macOS Keychain
+- Require GitHub sign-in plus the recovery phrase when enrolling a new device
+- Use an established authenticated-encryption library with XChaCha20-Poly1305 for manifests and independently verifiable file chunks
+- Sign revision headers and encrypted-manifest hashes with per-device Ed25519 keys
+- Use random nonces and immutable ciphertext objects; never overwrite an object in place
+- Zero sensitive key buffers where practical and never return keys or tokens across frontend IPC
+
+Supabase may observe ciphertext sizes, access times, revision activity, and lease ownership, but it must not be able to read names, paths, URLs, layouts, or file bytes. Losing every enrolled device and the recovery phrase makes the cloud data unrecoverable.
+
+### 15.4 Portable Files and Local Materialization
+
+Each device selects one visible `Afflow Workspaces` base folder. Every synced workstation receives a stable subfolder derived from its opaque ID rather than its display name.
+
+Enabling sync for an existing workstation must:
+
+1. Scan the root and report exclusions, unsupported links, invalid paths, case collisions, estimated size, and Git readiness.
+2. Copy portable data into the managed base folder without modifying the original.
+3. Verify source and destination hashes.
+4. Upload and commit the initial encrypted snapshot.
+5. Switch Afflow to the managed copy only after local and cloud verification succeeds.
+6. Leave the original folder untouched for manual cleanup.
+
+New devices download and verify the complete portable file set before opening the workstation. The first release does not implement placeholders or partial materialization.
+
+Preserve relative paths, file bytes, empty directories, and the executable bit. Do not promise to preserve ACLs, ownership, extended attributes, alternate data streams, or creation timestamps. Reject case-colliding paths, Windows-invalid names, symbolic links, and junctions rather than following or copying their targets.
+
+Limits and retention:
+
+- Maximum file size: 2 GB
+- Account cloud guardrail: 50 GB
+- Uploads: encrypted, chunked, resumable, retryable, and progress-reporting
+- Replaced and deleted versions: recoverable for 30 days
+- Unreferenced encrypted blobs: deleted only by delayed garbage collection
+
+### 15.5 Inclusion and Exclusion Rules
+
+Synchronize source files, documents, prompts, research, scripts, images, audio, video, outputs, workstation metadata, agent presets, and saved website launchers.
+
+Always exclude `.git`, credentials, private keys, secret `.env` files, browser profiles, cookies, CLI authentication, API keys, executable overrides, Afflow sync internals, device authentication state, and operating-system metadata. Reuse and extend the central sensitive-path policy rather than maintaining unrelated deny lists.
+
+Exclude generated folders such as `node_modules`, `target`, `dist`, `build`, `.next`, and caches by default. A versioned `.afflowignore` file may customize non-security exclusions but can never override the mandatory security deny list.
+
+### 15.6 Portable UI State
+
+Store paths as workstation-relative references and resolve them through the device-local root mapping. The encrypted portable state includes:
+
+- Workstation name, color, order, agent presets, saved browser launchers, and logical browser-profile IDs
+- Active workstation and tab, tab ordering, terminal pane tree, pane proportions, and relative working directories
+- Editor cursor, selection, scroll anchor, and explorer expansion
+- Open editor and Markdown files and saved preview URLs
+- Credential-free Git origin URL and expected branch
+
+Terminal tabs restore cold. Never synchronize terminal output, scrollback, shell history, environment variables, active processes, agent runtime status, or unsaved buffers. AI conversations and global application preferences remain device-local in the first release.
+
+Managed browser profiles use the same logical profile ID on both devices but have independent local profile directories. Cookies, logins, browser storage, extensions, and live browser tabs never synchronize. Users authenticate in the browser separately on each device.
+
+### 15.7 Git Workstations
+
+Do not synchronize `.git` internals. On a new device, clone the credential-free origin and expected branch using that device's Git credentials, then overlay the encrypted cloud working files.
+
+Handoff must block a clean completion when local commits have not been pushed. Saved but uncommitted working-file changes do synchronize. URLs containing embedded credentials must be rejected and never persisted or logged.
+
+### 15.8 Continuous Sync, Leases, and Handoff
+
+Watch enrolled roots recursively. Settle rapid write events, hash stable files, upload changed chunks, and atomically commit a new encrypted manifest. Only saved filesystem contents synchronize.
+
+Use a renewable 90-second active-device lease with frequent heartbeats. A second online device may download and inspect the workspace but must open Afflow editors read-only until it takes over. Lease loss must stop new local commits and clearly identify the active device.
+
+The Handoff action must:
+
+1. Run Save All and stop if any editor cannot be saved.
+2. Check for unpushed Git commits and stop until they are pushed.
+3. List busy terminal processes and require the user to stop them or explicitly acknowledge that they will remain on the current device.
+4. Wait for the final file and UI-state revision to commit.
+5. Release the lease and report that the other device is ready.
+
+An offline device may continue working from its complete local mirror. Because a network partition can create two writers, leases are advisory offline and reconciliation must preserve both sides.
+
+### 15.9 Conflicts and Recovery
+
+Reconcile changes against the last common revision. Automatically merge non-overlapping edits to valid UTF-8 text files up to 5 MB. Do not insert conflict markers automatically.
+
+For overlapping text changes, binary divergence, type changes, or ambiguous renames, keep the accepted cloud-head version at the original path and materialize the incoming version as a clearly named conflict copy. Delete-versus-edit keeps the edited data. Never use timestamps alone to discard a version.
+
+Provide a conflict view with comparison, keep-local, keep-cloud, and keep-both actions. Provide 30-day version history and explicit file restoration.
+
+### 15.10 Native Commands and Events
+
+Rust owns authentication, network access, encryption, key storage, scanning, transfers, filesystem mutation, leases, and reconciliation. The frontend receives typed status DTOs and invokes commands for:
+
+- Account sign-in, sign-out, recovery unlock, account status, device listing, and revocation
+- Base-folder selection and cloud-workspace discovery
+- Workspace enrollment, download, pause, resume, status, handoff, and takeover
+- Conflict listing and resolution
+- Version listing and restoration
+
+Expose status values for `disabled`, `scanning`, `uploading`, `downloading`, `upToDate`, `paused`, `readOnly`, `conflict`, and `error`, with byte progress and lease state. Events and errors must never contain tokens, encryption keys, recovery phrases, secret file contents, or plaintext cloud manifests.
+
+### 15.11 User Interface
+
+- Add Account & Sync settings for GitHub connection, recovery setup, base folder, enrolled devices, storage usage, and sign-out
+- Add compact sync status, progress, pause, and Handoff controls to the workstation sidebar
+- Show a review screen before enrollment with exclusions, unsupported files, estimated usage, and Git readiness
+- Show which device owns the lease and provide an explicit takeover flow
+- Add conflict resolution and 30-day version-history views
+- Keep local files on sign-out by default while removing cloud credentials and keys from the device
+
+### 15.12 Delivery Sequence
+
+1. Freeze versioned encryption and manifest formats, threat model, Supabase migrations, RLS policies, and cryptographic test vectors.
+2. Implement GitHub PKCE, recovery/keychain flows, device registration, local sync journal, and Apple Silicon compilation.
+3. Complete one small workstation's Windows-to-Mac upload, full download, lease, Handoff, and state restoration.
+4. Add recursive synchronization, resumable chunks, exclusion rules, Git reconstruction, quota enforcement, and version retention.
+5. Add three-way merging, conflict recovery, offline reconciliation, and failure recovery.
+6. Complete the sync UI, macOS browser integration coverage, GitHub Actions coverage, and physical MacBook acceptance test.
+
+### 15.13 Sync Acceptance Tests
+
+- A saved Windows edit and practical UI layout appear byte-for-byte on the Mac after Handoff
+- A Mac edit can be handed back to Windows through the same guarded flow
+- Initial download produces a complete, hash-verified offline workstation
+- Git is cloned with device-local credentials and synchronized working files are overlaid correctly
+- Interrupted uploads and downloads resume without publishing partial revisions
+- Concurrent revision commits and lease races have deterministic outcomes
+- Offline divergent edits preserve both versions; safe non-overlapping text edits merge
+- Deleted and replaced files can be restored during the 30-day window
+- Symlinks, junctions, traversal, case collisions, invalid names, and oversized files fail safely
+- Separate Supabase users cannot access each other's rows or objects
+- No plaintext filenames, contents, URLs, tokens, credentials, or recovery keys appear in Supabase, object paths, IPC, application logs, or crash errors
+- Browser profiles and sign-ins remain independent on Windows and macOS
+- Terminal tabs restore cold and no process, history, environment, or output crosses devices
+
+## 16. Initial Development Backlog
 
 ### P0 — Must Have
 
@@ -609,6 +789,8 @@ Saved → Researching → Scripting → Review → Generating → Editing → Re
 
 ### P2 — Later
 
+- [ ] Implement Afflow Cloud Sync according to Section 15 after the current MVP phases
+- [ ] Add the Apple Silicon local development build and physical MacBook acceptance coverage
 - [ ] Product records
 - [ ] Production pipeline/status board
 - [ ] Search across scripts and research
@@ -617,11 +799,12 @@ Saved → Researching → Scripting → Review → Generating → Editing → Re
 - [ ] Optional local automation/orchestration
 - [ ] Analytics integrations through official APIs
 
-## 16. Testing Matrix
+## 17. Testing Matrix
 
 ### Desktop
 
 - Windows 11 is the first supported platform
+- Apple Silicon macOS 13+ becomes a deliberately tested local-development target for the Afflow Cloud phase
 - Other platforms are best effort until deliberately tested
 
 ### Browser Launcher Test Cases
@@ -658,7 +841,7 @@ Saved → Researching → Scripting → Review → Generating → Editing → Re
 - Warn before closing a live process
 - Restart configuration after application relaunch
 
-## 17. MVP Acceptance Criteria
+## 18. MVP Acceptance Criteria
 
 The MVP is complete only when all of the following are true:
 
@@ -677,7 +860,7 @@ The MVP is complete only when all of the following are true:
 - [x] No credentials are stored in workstation configuration files.
 - [ ] A packaged Windows build completes one real affiliate-content workflow.
 
-## 18. Architecture Decisions to Resolve Early
+## 19. Architecture Decisions to Resolve Early
 
 Record the answers as architecture decision records before major implementation:
 
@@ -690,7 +873,7 @@ Record the answers as architecture decision records before major implementation:
 7. How will the app respond when a workstation root is moved or unavailable?
 8. Which upstream changes should remain easy to merge from Terax?
 
-## 19. Guardrails for Coding Agents
+## 20. Guardrails for Coding Agents
 
 Use these rules when asking Codex, Claude Code, or another agent to implement the project:
 
@@ -709,7 +892,7 @@ Use these rules when asking Codex, Claude Code, or another agent to implement th
 - Report changed files, tests run, remaining risks, and manual verification steps.
 - Stop and explain if a proposed change would break upstream licensing, security boundaries, or user data.
 
-## 20. First Agent Task
+## 21. First Agent Task
 
 Use this after cloning the Terax fork:
 
@@ -732,7 +915,7 @@ Inspect the repository and produce a concise architecture map covering:
 Create docs/architecture-baseline.md with file references, risks, and a recommended Phase 1 implementation sequence. Do not modify application code during this task. Run only safe, read-only inspection commands.
 ```
 
-## 21. Definition of the First Usable Release
+## 22. Definition of the First Usable Release
 
 The first usable release is not the version with the most automation. It is the version that reliably gives the creator one place to:
 
