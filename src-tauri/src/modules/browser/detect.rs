@@ -315,8 +315,8 @@ pub fn validate_executable_for(
 #[cfg(test)]
 mod tests {
     use super::{
-        accepts, candidate_paths, detect_with, validate_executable_for, verify_executable,
-        verify_executable_for, AppPathEntries, CandidateFacts,
+        accepts, candidate_paths, detect_with, validate_executable_for, verify_executable_for,
+        AppPathEntries, CandidateFacts,
     };
     use crate::modules::browser::platform::Platform;
     use crate::modules::browser::BrowserId;
@@ -601,18 +601,27 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("chrome.exe");
         std::fs::create_dir(&dir).unwrap();
-        assert_eq!(verify_executable(&dir, "chrome.exe"), None);
+        assert_eq!(
+            verify_executable_for(&dir, "chrome.exe", Platform::Windows),
+            None
+        );
 
         let wrong = temp_exe(tmp.path(), "msedge.exe");
-        assert_eq!(verify_executable(&wrong, "chrome.exe"), None);
+        assert_eq!(
+            verify_executable_for(&wrong, "chrome.exe", Platform::Windows),
+            None
+        );
 
         let missing = tmp.path().join("nothing.exe");
-        assert_eq!(verify_executable(&missing, "chrome.exe"), None);
+        assert_eq!(
+            verify_executable_for(&missing, "chrome.exe", Platform::Windows),
+            None
+        );
 
         let real = tmp.path().join("real");
         std::fs::create_dir(&real).unwrap();
         let right = temp_exe(&real, "chrome.exe");
-        assert!(verify_executable(&right, "chrome.exe").is_some());
+        assert!(verify_executable_for(&right, "chrome.exe", Platform::Windows).is_some());
     }
 
     #[test]
