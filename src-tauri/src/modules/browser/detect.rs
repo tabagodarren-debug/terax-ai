@@ -315,8 +315,8 @@ pub fn validate_executable_for(
 #[cfg(test)]
 mod tests {
     use super::{
-        accepts, candidate_paths, detect_with, validate_executable, validate_executable_for,
-        verify_executable, verify_executable_for, AppPathEntries, CandidateFacts,
+        accepts, candidate_paths, detect_with, validate_executable_for, verify_executable,
+        verify_executable_for, AppPathEntries, CandidateFacts,
     };
     use crate::modules::browser::platform::Platform;
     use crate::modules::browser::BrowserId;
@@ -592,6 +592,10 @@ mod tests {
         path
     }
 
+    fn validate_windows(browser: BrowserId, raw: &str) -> Result<String, String> {
+        validate_executable_for(browser, raw, Platform::Windows)
+    }
+
     #[test]
     fn verification_rejects_a_directory_and_a_wrong_basename() {
         let tmp = tempfile::tempdir().unwrap();
@@ -617,8 +621,8 @@ mod tests {
         let chrome = temp_exe(tmp.path(), "chrome.exe");
         let edge = temp_exe(tmp.path(), "msedge.exe");
 
-        let c = validate_executable(BrowserId::Chrome, &chrome.to_string_lossy()).expect("chrome");
-        let e = validate_executable(BrowserId::Edge, &edge.to_string_lossy()).expect("edge");
+        let c = validate_windows(BrowserId::Chrome, &chrome.to_string_lossy()).expect("chrome");
+        let e = validate_windows(BrowserId::Edge, &edge.to_string_lossy()).expect("edge");
 
         assert!(c.ends_with("chrome.exe"));
         assert!(e.ends_with("msedge.exe"));
@@ -630,10 +634,10 @@ mod tests {
 
     #[test]
     fn rejects_blank_and_relative_override_paths() {
-        assert!(validate_executable(BrowserId::Chrome, "").is_err());
-        assert!(validate_executable(BrowserId::Chrome, "   ").is_err());
+        assert!(validate_windows(BrowserId::Chrome, "").is_err());
+        assert!(validate_windows(BrowserId::Chrome, "   ").is_err());
 
-        let err = validate_executable(BrowserId::Chrome, "chrome.exe").unwrap_err();
+        let err = validate_windows(BrowserId::Chrome, "chrome.exe").unwrap_err();
         assert!(err.contains("absolute"), "unexpected error: {err}");
     }
 
@@ -641,7 +645,7 @@ mod tests {
     fn rejects_a_missing_override_path() {
         let tmp = tempfile::tempdir().unwrap();
         let missing = tmp.path().join("chrome.exe");
-        let err = validate_executable(BrowserId::Chrome, &missing.to_string_lossy()).unwrap_err();
+        let err = validate_windows(BrowserId::Chrome, &missing.to_string_lossy()).unwrap_err();
         assert!(err.contains("not found"), "unexpected error: {err}");
     }
 
@@ -650,7 +654,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("chrome.exe");
         std::fs::create_dir(&dir).unwrap();
-        let err = validate_executable(BrowserId::Chrome, &dir.to_string_lossy()).unwrap_err();
+        let err = validate_windows(BrowserId::Chrome, &dir.to_string_lossy()).unwrap_err();
         assert!(err.contains("regular file"), "unexpected error: {err}");
     }
 
@@ -659,7 +663,7 @@ mod tests {
     fn rejects_a_non_exe_override_path() {
         let tmp = tempfile::tempdir().unwrap();
         let bat = temp_exe(tmp.path(), "chrome.bat");
-        let err = validate_executable(BrowserId::Chrome, &bat.to_string_lossy()).unwrap_err();
+        let err = validate_windows(BrowserId::Chrome, &bat.to_string_lossy()).unwrap_err();
         assert!(err.contains(".exe"), "unexpected error: {err}");
     }
 
@@ -668,11 +672,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let edge = temp_exe(tmp.path(), "msedge.exe");
 
-        let err = validate_executable(BrowserId::Chrome, &edge.to_string_lossy()).unwrap_err();
+        let err = validate_windows(BrowserId::Chrome, &edge.to_string_lossy()).unwrap_err();
         assert!(err.contains("chrome.exe"), "unexpected error: {err}");
 
         let chrome = temp_exe(tmp.path(), "chrome.exe");
-        let err = validate_executable(BrowserId::Edge, &chrome.to_string_lossy()).unwrap_err();
+        let err = validate_windows(BrowserId::Edge, &chrome.to_string_lossy()).unwrap_err();
         assert!(err.contains("msedge.exe"), "unexpected error: {err}");
     }
 
@@ -682,12 +686,12 @@ mod tests {
         let chrome = temp_exe(tmp.path(), "chrome.exe");
         let saved = chrome.to_string_lossy().to_string();
 
-        assert!(validate_executable(BrowserId::Chrome, &saved).is_ok());
+        assert!(validate_windows(BrowserId::Chrome, &saved).is_ok());
 
         // Exactly what a browser update or uninstall does to a saved override.
         std::fs::remove_file(&chrome).unwrap();
 
-        let err = validate_executable(BrowserId::Chrome, &saved).unwrap_err();
+        let err = validate_windows(BrowserId::Chrome, &saved).unwrap_err();
         assert!(err.contains("not found"), "unexpected error: {err}");
     }
 
