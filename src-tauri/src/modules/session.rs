@@ -183,6 +183,7 @@ fn acquire_session_lock(path: &Path) -> Result<SessionLock, String> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .mode(0o600)
         .open(path)
         .map_err(|error| format!("open Afflow session lock: {error}"))?;
