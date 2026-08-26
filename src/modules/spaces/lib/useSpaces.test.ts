@@ -17,7 +17,10 @@ vi.mock("./store", () => ({
   setSpaceStatePersistenceBlocked: persistence.setSpaceStatePersistenceBlocked,
 }));
 
-import { createDefaultWorkstationAgentPresets } from "@/modules/agents/lib/presets";
+import {
+  createCustomWorkstationAgentPreset,
+  createDefaultWorkstationAgentPresets,
+} from "@/modules/agents/lib/presets";
 import {
   browserProfileIdForWorkstation,
   createDefaultBrowserTools,
@@ -205,6 +208,23 @@ describe("useSpaces", () => {
     );
     expect(a.agentPresets).not.toBe(b.agentPresets);
     expect(persistence.saveSpacesList).toHaveBeenLastCalledWith([a, b]);
+  });
+
+  it("adds and removes a custom preset only in its workstation", () => {
+    useSpaces.getState().hydrate([space("a"), space("b")], "a");
+    const preset = createCustomWorkstationAgentPreset(
+      "Researcher",
+      "preset-m123abc-abcd1",
+    );
+
+    useSpaces.getState().addAgentPreset("a", preset);
+    const presets = useSpaces.getState().spaces[0].agentPresets;
+    expect(presets[presets.length - 1]).toEqual(preset);
+    expect(useSpaces.getState().spaces[1].agentPresets).toHaveLength(4);
+
+    useSpaces.getState().removeAgentPreset("a", preset.id);
+    expect(useSpaces.getState().spaces[0].agentPresets).toHaveLength(4);
+    expect(persistence.saveSpacesList).toHaveBeenCalledTimes(2);
   });
 
   it("resets one role or the complete preset list without affecting peers", () => {

@@ -5,11 +5,16 @@ import {
 import { describe, expect, it } from "vitest";
 import {
   AFFLOW_AGENT_PRESET_IDS,
+  createCustomWorkstationAgentPreset,
   createDefaultWorkstationAgentPresets,
+  customAgentPresetPromptFile,
   DEFAULT_WORKSTATION_AGENT_PRESETS,
+  MAX_CUSTOM_AGENT_PRESETS,
+  newCustomAgentPresetId,
   normalizeWorkstationAgentPresets,
   resolveWorkstationAgentCommand,
   startupInstructionForPreset,
+  validateNewAgentPresetInput,
   validateWorkstationAgentPreset,
 } from "./presets";
 
@@ -146,6 +151,70 @@ describe("workstation agent presets", () => {
       startupInstructionForPreset(DEFAULT_WORKSTATION_AGENT_PRESETS[3]),
     ).toBe(
       "Read and follow the instructions in agents/video-prompt/prompt.md before starting.",
+    );
+  });
+
+  it("creates and restores safe workstation-relative custom presets", () => {
+    const id = "preset-m123abc-9x8y7z" as const;
+    const custom = createCustomWorkstationAgentPreset(
+      "  Product Researcher  ",
+      id,
+    );
+    const restored = normalizeWorkstationAgentPresets([custom]);
+
+    expect(custom).toEqual({
+      id,
+      name: "Product Researcher",
+      launcherId: "claude",
+      customCommand: null,
+      promptFile: customAgentPresetPromptFile(id),
+    });
+    expect(restored.slice(4)).toEqual([custom]);
+    expect(startupInstructionForPreset(custom)).toBe(
+      `Read and follow the instructions in ${custom.promptFile} before starting.`,
+    );
+  });
+
+  it("drops custom presets with forged prompt paths and caps their count", () => {
+    const custom = Array.from(
+      { length: MAX_CUSTOM_AGENT_PRESETS + 2 },
+      (_, index) => {
+        const id = `preset-m123ab${index}-abcd${index}` as const;
+        return createCustomWorkstationAgentPreset(`Preset ${index}`, id);
+      },
+    );
+    const forged = {
+      ...custom[0],
+      id: "preset-m999999-escape",
+      promptFile: "../../outside.md",
+    };
+    const normalized = normalizeWorkstationAgentPresets([forged, ...custom]);
+
+    expect(normalized).toHaveLength(4 + MAX_CUSTOM_AGENT_PRESETS);
+    expect(normalized.some((preset) => preset.id === forged.id)).toBe(false);
+  });
+
+  it("validates the two custom preset inputs", () => {
+    expect(
+      validateNewAgentPresetInput({
+        name: "  Researcher  ",
+        prompt: "# Role\n",
+      }),
+    ).toEqual({ ok: true, name: "Researcher", prompt: "# Role\n" });
+    expect(validateNewAgentPresetInput({ name: "", prompt: "# Role" })).toEqual(
+      {
+        ok: false,
+        error: "Preset name is required.",
+      },
+    );
+    expect(
+      validateNewAgentPresetInput({ name: "Researcher", prompt: " " }),
+    ).toEqual({
+      ok: false,
+      error: "Paste the agent prompt markdown.",
+    });
+    expect(newCustomAgentPresetId()).toMatch(
+      /^preset-[a-z0-9]{6,24}-[a-z0-9]{4,12}$/,
     );
   });
 });

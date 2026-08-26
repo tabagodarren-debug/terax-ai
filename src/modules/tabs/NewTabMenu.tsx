@@ -12,11 +12,16 @@ import {
 } from "@/components/ui/popover";
 import { fmtShortcut, MOD_KEY, SHIFT_KEY } from "@/lib/platform";
 import { AgentLauncherPanel } from "@/modules/agents/components/AgentLauncherPanel";
+import { CreateAgentPresetDialog } from "@/modules/agents/components/CreateAgentPresetDialog";
 import {
   AgentPresetPanel,
   type AgentPresetPanelProps,
 } from "@/modules/agents/components/AgentPresetPanel";
 import type { AgentLaunchRequest } from "@/modules/agents/lib/launcher";
+import type {
+  NewAgentPresetInput,
+  WorkstationAgentPreset,
+} from "@/modules/agents/lib/presets";
 import {
   AiBrowserIcon,
   ArrowRight01Icon,
@@ -32,8 +37,12 @@ import { useEffect, useRef, useState } from "react";
 
 export type AgentPresetMenuConfig = Omit<
   AgentPresetPanelProps,
-  "selectedPresetId" | "onSelect" | "onBack"
->;
+  "selectedPresetId" | "onSelect" | "onBack" | "onRequestCreatePreset"
+> & {
+  onCreatePreset: (
+    input: NewAgentPresetInput,
+  ) => Promise<WorkstationAgentPreset>;
+};
 
 type Props = {
   onNew: () => void;
@@ -58,6 +67,7 @@ export function NewTabMenu({
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [launcherOpen, setLauncherOpen] = useState(false);
+  const [createPresetOpen, setCreatePresetOpen] = useState(false);
   const [launcherView, setLauncherView] = useState<"presets" | "advanced">(
     "presets",
   );
@@ -221,9 +231,17 @@ export function NewTabMenu({
               selectedPresetId={selectedPresetId}
               onSelect={setSelectedPresetId}
               onBack={backToMenu}
+              onRequestCreatePreset={() => {
+                setLauncherOpen(false);
+                setCreatePresetOpen(true);
+              }}
               onLaunch={(presetId) => {
                 setLauncherOpen(false);
                 agentPresets.onLaunch(presetId);
+              }}
+              onLaunchInPane={(presetId) => {
+                setLauncherOpen(false);
+                agentPresets.onLaunchInPane(presetId);
               }}
               onOpenPrompt={(presetId) => {
                 setLauncherOpen(false);
@@ -259,6 +277,14 @@ export function NewTabMenu({
           />
         )}
       </PopoverContent>
+      <CreateAgentPresetDialog
+        open={createPresetOpen}
+        onOpenChange={setCreatePresetOpen}
+        onCreate={async (input) => {
+          const preset = await agentPresets.onCreatePreset(input);
+          setSelectedPresetId(preset.id);
+        }}
+      />
     </Popover>
   );
 }

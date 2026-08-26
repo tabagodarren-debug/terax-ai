@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Afflow Workflow Manual</title>
+  <style>
+    @page { size: A4; margin: 12mm; }
+    * { box-sizing: border-box; }
+    :root {
+      --ink: #17212b;
+      --muted: #52606d;
+      --line: #d7dee5;
+      --paper: #ffffff;
+      --soft: #f3f6f8;
+      --blue: #39748f;
+      --blue-soft: #e8f2f6;
+      --coral: #b65d48;
+      --green: #35735b;
+      --dark: #101417;
+    }
+    html, body { margin: 0; padding: 0; background: #e9edf0; color: var(--ink); }
+    body { font-family: "Segoe UI", Arial, sans-serif; font-size: 10.5pt; line-height: 1.45; }
+    .page {
+      width: 186mm;
+      height: 273mm;
+      margin: 0 auto 10mm;
+      padding: 0;
+      background: var(--paper);
+      break-after: page;
+      page-break-after: always;
+      break-inside: avoid-page;
+      page-break-inside: avoid;
+      position: relative;
+      overflow: hidden;
+    }
+    .page:last-child { page-break-after: auto; }
+    .pad { padding: 13mm 14mm 12mm; }
+    .page-no { position: absolute; right: 14mm; bottom: 7mm; color: #75808a; font-size: 8.5pt; }
+    h1, h2, h3 { margin: 0; font-weight: 650; letter-spacing: 0; }
+    h1 { font-size: 34pt; line-height: 1.08; }
+    h2 { font-size: 22pt; line-height: 1.15; margin-bottom: 4mm; }
+    h3 { font-size: 13pt; margin-bottom: 1.5mm; }
+    p { margin: 0 0 3mm; }
+    ul, ol { margin: 2mm 0 4mm 5mm; padding-left: 5mm; }
+    li { margin-bottom: 1.6mm; }
+    code { font-family: Consolas, monospace; font-size: 9pt; color: #223b49; background: #edf2f4; padding: 0.2mm 1mm; border-radius: 2px; }
+    .eyebrow { color: var(--blue); text-transform: uppercase; font-weight: 700; font-size: 8.5pt; margin-bottom: 3mm; }
+    .lede { font-size: 14pt; line-height: 1.5; color: #33414c; max-width: 142mm; }
+    .muted { color: var(--muted); }
+    .small { font-size: 8.8pt; }
+    .rule { height: 1px; background: var(--line); margin: 5mm 0; }
+    .cover {
+      background: var(--dark);
+      color: #f4f7f8;
+      padding: 22mm 18mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .cover .brand { color: #9ec5d5; font-size: 12pt; font-weight: 650; }
+    .cover .subtitle { font-size: 17pt; color: #cbd5da; max-width: 135mm; margin-top: 7mm; }
+    .cover .band { border-top: 1px solid #3e4c54; padding-top: 7mm; display: grid; grid-template-columns: 1fr 1fr; gap: 10mm; color: #b7c3c9; }
+    .cover .version { color: #e9b6a9; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 5mm; }
+    .grid-wide { display: grid; grid-template-columns: 1.45fr 0.8fr; gap: 7mm; align-items: start; }
+    .panel { border: 1px solid var(--line); background: var(--paper); padding: 4mm; border-radius: 6px; }
+    .panel.soft { background: var(--soft); border-color: transparent; }
+    .callout { border-left: 3px solid var(--blue); background: var(--blue-soft); padding: 3.5mm 4mm; margin: 4mm 0; }
+    .callout.warn { border-left-color: var(--coral); background: #faf0ed; }
+    .callout.good { border-left-color: var(--green); background: #ebf5f0; }
+    .number {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 7mm;
+      height: 7mm;
+      border-radius: 50%;
+      color: white;
+      background: var(--blue);
+      font-weight: 700;
+      margin-right: 2mm;
+    }
+    .step { display: grid; grid-template-columns: 9mm 1fr; gap: 1mm; margin-bottom: 4mm; }
+    .step .number { grid-column: 1; }
+    .step .step-body { grid-column: 2; }
+    .step p { margin-bottom: 1mm; }
+    .shot { width: 100%; height: auto; display: block; border: 1px solid #22292e; border-radius: 4px; background: #111; }
+    .shot.narrow { max-height: 153mm; width: auto; max-width: 100%; margin: 0 auto; }
+    .caption { color: var(--muted); font-size: 8.5pt; margin-top: 1.5mm; }
+    .feature-list { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm; }
+    .feature { border-top: 2px solid var(--blue); padding: 3mm 1mm 1mm; }
+    .feature strong { display: block; margin-bottom: 1mm; }
+    .path { overflow-wrap: anywhere; font-family: Consolas, monospace; font-size: 8.5pt; color: #29414e; }
+    .status-table { width: 100%; border-collapse: collapse; margin: 3mm 0; }
+    .status-table th, .status-table td { padding: 2.4mm 2.7mm; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    .status-table th { color: var(--muted); font-size: 8.5pt; text-transform: uppercase; }
+    .tag { display: inline-block; font-size: 8pt; font-weight: 700; padding: 0.6mm 2mm; border-radius: 10px; background: #e8f2ed; color: #285e49; }
+    .tag.planned { background: #f7e9e5; color: #8a4433; }
+    .tree { white-space: pre; font-family: Consolas, monospace; font-size: 8.6pt; line-height: 1.55; background: #11181c; color: #dce8ed; padding: 4mm; border-radius: 5px; }
+    .checklist { list-style: none; padding-left: 0; margin-left: 0; }
+    .checklist li { padding-left: 7mm; position: relative; }
+    .checklist li::before { content: "[ ]"; font-family: Consolas, monospace; position: absolute; left: 0; color: var(--blue); }
+    .footer-note { position: absolute; left: 14mm; bottom: 7mm; color: #75808a; font-size: 8.5pt; }
+    @media print {
+      html, body { background: white; }
+      .page { margin: 0; }
+    }
+  </style>
+</head>
+<body>
+  <section class="page cover">
+    <div>
+      <div class="brand">AFFLOW</div>
+      <div style="margin-top: 44mm">
+        <div class="eyebrow" style="color:#e9b6a9">Windows workflow manual</div>
+        <h1>From product files<br>to publish-ready creative</h1>
+        <p class="subtitle">How to use Afflow workstations, agent presets, and isolated browser tools for an affiliate content production workflow.</p>
+      </div>
+    </div>
+    <div class="band">
+      <div><strong>Build</strong><br><span class="version">Afflow 0.1.0</span></div>
+      <div><strong>Manual generated</strong><br>August 25, 2026</div>
+    </div>
+  </section>
+
+  <section class="page pad">
+    <div class="eyebrow">Start here</div>
+    <h2>Open Afflow and know what changed</h2>
+    <p class="lede">Afflow keeps Terax's terminal, editor, file explorer, Git tools, and built-in AI surfaces. The additions turn that baseline into a persistent production workspace for affiliate content.</p>
+    <div class="rule"></div>
+    <div class="grid-2">
+      <div>
+        <h3>How to open it</h3>
+        <ol>
+          <li>Open the Windows Start menu and search for <strong>Afflow</strong>.</li>
+          <li>Installed application: <span class="path">C:\Users\Admin\AppData\Local\Afflow\afflow.exe</span></li>
+          <li>Installer for another Windows PC: <span class="path">C:\Users\Admin\Afflow\src-tauri\target\release\bundle\nsis\Afflow_0.1.0_x64-setup.exe</span></li>
+        </ol>
+        <div class="callout good"><strong>Your current app is the installed Windows build.</strong><br>It is already open and restoring local Afflow state.</div>
+      </div>
+      <div>
+        <h3>Added over baseline Terax</h3>
+        <div class="feature-list">
+          <div class="feature"><strong>Workstations</strong>Separate files, tabs, layouts, tools, and browser choices by niche or project.</div>
+          <div class="feature"><strong>Scaffolding</strong>Creates a predictable production folder tree and three role prompts.</div>
+          <div class="feature"><strong>Agent presets</strong>Launches four repeatable workflows through Claude, Codex, Gemini, OpenCode, or a custom CLI.</div>
+          <div class="feature"><strong>Browser tools</strong>Opens saved sites in a normal Chrome or Edge window with Afflow-managed profiles.</div>
+          <div class="feature"><strong>Daily recovery</strong>Restores saved workstation state and warns before losing dirty files or active work.</div>
+          <div class="feature"><strong>Windows packaging</strong>Provides an installable desktop application instead of requiring VS Code to run it.</div>
+        </div>
+      </div>
+    </div>
+    <div class="callout warn"><strong>Not implemented yet:</strong> cross-device cloud sync. Windows and macOS support is being prepared, but copying workstation files and UI state between your PC and MacBook belongs to the later Afflow Cloud phase.</div>
+    <div class="page-no">2</div>
+  </section>
+
+  <section class="page pad">
+    <div class="eyebrow">Step 1</div>
+    <h2>Create one workstation per niche or campaign</h2>
+    <div class="grid-wide">
+      <div>
+        <div class="step"><span class="number">1</span><div class="step-body"><h3>Create a clean root folder</h3><p>Use a location such as <code>Documents\Afflow Workspaces\Fit Check</code>. Avoid using your whole home folder as the long-term workstation root.</p></div></div>
+        <div class="step"><span class="number">2</span><div class="step-body"><h3>Click the plus in Workstations</h3><p>The plus creates and scaffolds a workstation. The folder icon opens an existing workstation.</p></div></div>
+        <div class="step"><span class="number">3</span><div class="step-body"><h3>Choose the folder</h3><p>Afflow adds the standard folder tree and a minimal <code>workstation.json</code>. Existing prompt files are preserved and never overwritten.</p></div></div>
+        <div class="step"><span class="number">4</span><div class="step-body"><h3>Switch by clicking its row</h3><p>Each row retains its own active files, terminal definitions, saved websites, profile mode, agent choices, and layout.</p></div></div>
+        <div class="callout"><strong>Recommended workstation split</strong><br>Use separate workstations for Fit Check, Realistic AI Avatar, Health and Wellness, or any distinct brand, client, or campaign.</div>
+      </div>
+      <div>
+        <img class="shot narrow" src="assets/01-workstation-sidebar.png" alt="Afflow Workstations sidebar">
+        <p class="caption">The Workstations rail. Use the plus to create, the folder to open, and a row to switch.</p>
+      </div>
+    </div>
+    <div class="rule"></div>
+    <h3>What Afflow creates</h3>
+    <div class="grid-2">
+      <div class="tree">agents/
+  script-generator/prompt.md
+  script-reviewer/prompt.md
+  video-prompt/prompt.md
+products/
+references/
+research/</div>
+      <div class="tree">scripts/
+images/
+audio/
+videos/
+outputs/
+workstation.json</div>
+    </div>
+    <div class="page-no">3</div>
+  </section>
+
+  <section class="page pad">
+    <div class="eyebrow">Step 2</div>
+    <h2>Launch a workstation agent</h2>
+    <div class="grid-2" style="grid-template-columns: 0.72fr 1.28fr; align-items:start">
+      <div>
+        <img class="shot" src="assets/03-new-tab-menu-crop.png" alt="Afflow New Tab menu with Agents item">
+        <p class="caption">Click the tab plus, then select <strong>Agents</strong>.</p>
+      </div>
+      <div>
+        <img class="shot" src="assets/04-agent-presets-panel-crop.png" alt="Afflow Agent presets panel">
+        <p class="caption">Choose a role and a detected command-line agent, then launch it in the workstation root.</p>
+      </div>
+    </div>
+    <div class="rule"></div>
+    <table class="status-table">
+      <thead><tr><th>Preset</th><th>Use it for</th><th>Expected result</th></tr></thead>
+      <tbody>
+        <tr><td><strong>General Agent</strong></td><td>Research, file organization, planning, and one-off work.</td><td>Work completed inside the active workstation.</td></tr>
+        <tr><td><strong>Script Generator</strong></td><td>Short-form affiliate scripts from verified product facts and audience notes.</td><td>Hook, scenes, on-screen text, voice-over, CTA, and claims to verify.</td></tr>
+        <tr><td><strong>Script Reviewer</strong></td><td>Risk review before production, especially health and wellness content.</td><td>Risk level, line findings, required revisions, and a safer version.</td></tr>
+        <tr><td><strong>Image-to-Video Prompt Generator</strong></td><td>Turn a source image and approved script into a tool-specific motion prompt.</td><td>Main prompt, negative prompt, motion notes, continuity risks, and conservative alternate.</td></tr>
+      </tbody>
+    </table>
+    <div class="callout"><strong>Side-by-side agents:</strong> press <code>Ctrl+D</code> or <code>Ctrl+Shift+D</code>, focus the new pane, choose a preset, then select <strong>Focused pane</strong>. For a new role, select <strong>New preset</strong>, enter its name, and paste the complete prompt.md content.</div>
+    <div class="callout warn"><strong>Two different agent surfaces exist.</strong> <code>New Tab &gt; Agents</code> is the added workstation workflow launcher. <code>Settings &gt; Agents</code> is Terax's global inline AI persona configuration.</div>
+    <div class="page-no">4</div>
+  </section>
+
+  <section class="page pad">
+    <div class="eyebrow">Step 3</div>
+    <h2>Use the browser profile that matches the job</h2>
+    <div class="grid-2" style="grid-template-columns: 1.05fr 0.95fr; align-items:start">
+      <div>
+        <img class="shot" src="assets/02-browser-tools-panel.png" alt="Afflow Browser tools panel">
+        <p class="caption">Browser tools launch external websites. Afflow does not embed a browser and does not inspect page contents.</p>
+      </div>
+      <div>
+        <div class="step"><span class="number">1</span><div class="step-body"><h3>Open Browser tools</h3><p>Click the browser icon beside Search and Settings.</p></div></div>
+        <div class="step"><span class="number">2</span><div class="step-body"><h3>Select a profile mode</h3><p><strong>This workstation</strong> isolates website sessions for the current niche. <strong>Shared</strong> reuses one Afflow profile across workstations.</p></div></div>
+        <div class="step"><span class="number">3</span><div class="step-body"><h3>Add or open tools</h3><p>Use the saved Google Flow, Kling, Grok, TikTok, Shopee, and Facebook launchers, add your own, or click <strong>Open all</strong>.</p></div></div>
+        <div class="step"><span class="number">4</span><div class="step-body"><h3>Sign in in the opened browser</h3><p>The managed profile is separate from your normal Chrome or Edge profile. Sign in once for that Afflow profile, subject to each website's session policy.</p></div></div>
+        <div class="callout good"><strong>Use isolated mode by default.</strong><br>It prevents two niche workstations from intentionally sharing login state. Use Shared only when cross-workstation reuse is the desired behavior.</div>
+      </div>
+    </div>
+    <div class="callout warn"><strong>Profile reset is destructive.</strong> Close the related browser first. Afflow refuses reset while the profile is active or its state is uncertain, and requires confirmation. It never resets your normal personal browser profile.</div>
+    <div class="page-no">5</div>
+  </section>
+
+  <section class="page pad">
+    <div class="eyebrow">Configuration</div>
+    <h2>Choose Chrome or Edge</h2>
+    <img class="shot" src="assets/07-browser-settings.png" alt="Afflow Browser settings showing detected Chrome and Edge">
+    <p class="caption">Open the gear icon, then select <strong>Browser</strong>. This Windows machine currently detects both Chrome and Edge.</p>
+    <div class="grid-2" style="margin-top:5mm">
+      <div class="panel soft">
+        <h3>Normal setup</h3>
+        <p>Select Chrome or Edge as the preferred browser. Afflow uses the detected executable and opens a normal external browser window.</p>
+      </div>
+      <div class="panel soft">
+        <h3>Executable override</h3>
+        <p>Use <strong>Choose .exe</strong> only when auto-detection misses a valid installation. Afflow validates the selected browser executable again before launch.</p>
+      </div>
+    </div>
+    <div class="callout"><strong>macOS direction:</strong> the native backend includes Chrome and Edge candidate detection and macOS profile lock probing. A physical Apple Silicon MacBook test and packaging pass are still required before the Mac build should be treated as accepted.</div>
+    <div class="page-no">6</div>
+  </section>
+
+  <section class="page pad">
+    <div class="eyebrow">Recommended routine</div>
+    <h2>Product-to-video workflow</h2>
+    <div class="grid-2">
+      <div>
+        <div class="step"><span class="number">1</span><div class="step-body"><h3>Collect verified inputs</h3><p>Put product facts in <code>products</code>, source material in <code>references</code>, and research notes in <code>research</code>. Keep claims tied to a source.</p></div></div>
+        <div class="step"><span class="number">2</span><div class="step-body"><h3>Generate the script</h3><p>Launch <strong>Script Generator</strong>. Specify platform, niche, audience, duration, language, tone, and the exact source files to use. Save the result under <code>scripts</code>.</p></div></div>
+        <div class="step"><span class="number">3</span><div class="step-body"><h3>Review before production</h3><p>Launch <strong>Script Reviewer</strong> against the saved script. Resolve unsupported claims and save the approved revision.</p></div></div>
+        <div class="step"><span class="number">4</span><div class="step-body"><h3>Prepare media</h3><p>Place source images in <code>images</code> and audio in <code>audio</code>. Launch <strong>Image-to-Video Prompt Generator</strong> with target tool, duration, and aspect ratio.</p></div></div>
+      </div>
+      <div>
+        <div class="step"><span class="number">5</span><div class="step-body"><h3>Open production websites</h3><p>Use Browser tools in <strong>This workstation</strong> mode. Open Flow, Kling, or Grok and upload the prepared media manually.</p></div></div>
+        <div class="step"><span class="number">6</span><div class="step-body"><h3>Bring results back</h3><p>Download completed media to <code>videos</code>. Keep publish-ready exports and final documents in <code>outputs</code>.</p></div></div>
+        <div class="step"><span class="number">7</span><div class="step-body"><h3>Do the final platform check</h3><p>Use TikTok, Shopee, or Facebook launchers for manual review and publishing. Afflow does not auto-post or bypass platform controls.</p></div></div>
+        <div class="step"><span class="number">8</span><div class="step-body"><h3>Save and close cleanly</h3><p>Save edited files before closing. Afflow checks for dirty editors and active terminal work, persists the workstation state, and restores it on the next start.</p></div></div>
+      </div>
+    </div>
+    <div class="rule"></div>
+    <h3>Suggested naming convention</h3>
+    <div class="panel soft"><code>scripts/2026-08-25-product-angle-v01.md</code><br><code>videos/2026-08-25-product-angle-9x16-v01.mp4</code><br><code>outputs/2026-08-25-product-angle-approved/</code></div>
+    <div class="callout warn"><strong>Only saved files persist and will eventually sync.</strong> Unsaved editor buffers, terminal output, running processes, browser cookies, and CLI login state are device-local by design.</div>
+    <div class="page-no">7</div>
+  </section>
+
+  <section class="page pad">
+    <div class="eyebrow">State and safety</div>
+    <h2>What Afflow restores today</h2>
+    <table class="status-table">
+      <thead><tr><th>State</th><th>Windows today</th><th>Across PC and Mac later</th></tr></thead>
+      <tbody>
+        <tr><td>Saved workstation files</td><td><span class="tag">Local</span> Kept in your selected folder.</td><td><span class="tag planned">Planned</span> End-to-end encrypted file sync.</td></tr>
+        <tr><td>Workstation name, order, tools, layout, saved tabs</td><td><span class="tag">Restored</span> Local persistence and crash recovery.</td><td><span class="tag planned">Planned</span> Portable declarative state.</td></tr>
+        <tr><td>Terminal sessions and running processes</td><td>Restored cold as definitions, not as live processes.</td><td>Never migrated live between devices.</td></tr>
+        <tr><td>Browser profile and sign-in</td><td>Local Afflow-managed directory.</td><td>Never synchronized. Sign in independently on each device.</td></tr>
+        <tr><td>CLI credentials and secrets</td><td>Stored by the CLI or OS credential store.</td><td>Never synchronized by Afflow.</td></tr>
+      </tbody>
+    </table>
+    <div class="callout good"><strong>Crash recovery:</strong> Afflow writes durable workspace state and a clean-close marker. After an unclean shutdown, it offers recovery rather than silently discarding the last saved state.</div>
+    <h3>Security boundaries</h3>
+    <ul>
+      <li>Every native file operation is constrained to an authorized canonical workstation root.</li>
+      <li>Browser launches use fixed arguments, not a shell, and never accept caller-supplied browser flags.</li>
+      <li><code>workstation.json</code> contains identity and creation metadata only. It contains no cookies, tokens, process handles, or passwords.</li>
+      <li>Afflow never reads, exports, or synchronizes browser cookies or local storage.</li>
+      <li>Browser profile reset fails closed when activity cannot be proven idle.</li>
+    </ul>
+    <div class="page-no">8</div>
+  </section>
+
+  <section class="page pad">
+    <div class="eyebrow">Quick reference</div>
+    <h2>First manual test checklist</h2>
+    <ul class="checklist">
+      <li>Create a dedicated empty folder and add it as a new workstation.</li>
+      <li>Confirm the standard folders and three prompt files were created.</li>
+      <li>Switch away and back; confirm the workstation retains its state.</li>
+      <li>Open <code>New Tab &gt; Agents</code> and launch Script Generator with Claude.</li>
+      <li>Save a sample script under <code>scripts</code>, then open it in Afflow.</li>
+      <li>Launch Script Reviewer and save a revised script.</li>
+      <li>Open Browser tools in <strong>This workstation</strong> mode.</li>
+      <li>Open one AI media site, sign in, close the browser, and launch it again.</li>
+      <li>Create a second workstation and verify its isolated profile is not signed in.</li>
+      <li>Switch both workstations to Shared mode and verify the shared profile is reused.</li>
+      <li>Upload and download one representative media file through the external browser.</li>
+      <li>Close Afflow with saved work, reopen it, and confirm workstation, tabs, layout, tools, and profile selection restore.</li>
+    </ul>
+    <div class="rule"></div>
+    <h3>Troubleshooting</h3>
+    <table class="status-table">
+      <tbody>
+        <tr><td><strong>Agent unavailable</strong></td><td>Install or authenticate the CLI, ensure its executable is on PATH, then reopen the Agent presets panel.</td></tr>
+        <tr><td><strong>Prompt missing</strong></td><td>Check the matching file under <code>agents</code>. Re-running scaffold is safe and preserves existing files.</td></tr>
+        <tr><td><strong>Browser not detected</strong></td><td>Open <code>Settings &gt; Browser</code>, refresh detection, or choose the exact Chrome or Edge executable.</td></tr>
+        <tr><td><strong>Profile reset refused</strong></td><td>Close every window using that Afflow profile and retry. Unknown activity is intentionally treated as unsafe.</td></tr>
+        <tr><td><strong>Workstation folder moved</strong></td><td>Use the workstation relocation action to reconnect the saved workstation to its new root.</td></tr>
+        <tr><td><strong>MacBook continuation</strong></td><td>Until Afflow Cloud exists, move saved workstation files manually. Browser and CLI authentication must remain separate.</td></tr>
+      </tbody>
+    </table>
+    <div class="callout"><strong>Current acceptance status:</strong> automated Windows checks and packaging are complete. Signed-in profile persistence, isolation, representative upload/download, sustained real workflow use, and physical MacBook acceptance remain manual validation items.</div>
+    <div class="footer-note">Afflow 0.1.0 workflow manual</div>
+    <div class="page-no">9</div>
+  </section>
+</body>
+</html>

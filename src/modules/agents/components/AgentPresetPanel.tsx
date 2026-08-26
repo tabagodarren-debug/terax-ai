@@ -18,10 +18,12 @@ import {
   type WorkstationAgentPreset,
 } from "@/modules/agents/lib/presets";
 import {
+  Add01Icon,
   ArrowLeft01Icon,
   Copy01Icon,
   File02Icon,
   FolderOpenIcon,
+  LayoutTwoColumnIcon,
   PlayIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -61,7 +63,13 @@ export type AgentPresetPanelProps = {
     presetId: AfflowAgentPresetId,
     update: AgentPresetUpdate,
   ) => void;
+  onRequestCreatePreset: () => void;
   onLaunch: (presetId: AfflowAgentPresetId) => void;
+  onLaunchInPane: (presetId: AfflowAgentPresetId) => void;
+  focusedPane: {
+    available: boolean;
+    reason?: string;
+  };
   onOpenPrompt: (presetId: AfflowAgentPresetId) => void;
   onCopyStartupInstruction: (presetId: AfflowAgentPresetId) => void;
   onOpenOutputs: (presetId: AfflowAgentPresetId) => void;
@@ -78,7 +86,10 @@ export function AgentPresetPanel({
   error,
   onSelect,
   onUpdatePreset,
+  onRequestCreatePreset,
   onLaunch,
+  onLaunchInPane,
+  focusedPane,
   onOpenPrompt,
   onCopyStartupInstruction,
   onOpenOutputs,
@@ -128,9 +139,20 @@ export function AgentPresetPanel({
               Choose a workflow role and CLI
             </p>
           </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            className="ml-auto rounded-md text-muted-foreground"
+            disabled={loading || !workstationRoot}
+            onClick={onRequestCreatePreset}
+          >
+            <HugeiconsIcon icon={Add01Icon} size={13} strokeWidth={1.8} />
+            New preset
+          </Button>
           {loading ? (
             <span
-              className="ml-auto text-[10px] text-muted-foreground"
+              className="text-[10px] text-muted-foreground"
               aria-live="polite"
             >
               Loading
@@ -206,6 +228,8 @@ export function AgentPresetPanel({
             error={error}
             onUpdatePreset={onUpdatePreset}
             onLaunch={onLaunch}
+            onLaunchInPane={onLaunchInPane}
+            focusedPane={focusedPane}
             onOpenPrompt={onOpenPrompt}
             onCopyStartupInstruction={onCopyStartupInstruction}
             onOpenOutputs={onOpenOutputs}
@@ -232,6 +256,8 @@ type PresetControlsProps = {
   error?: string | null;
   onUpdatePreset: AgentPresetPanelProps["onUpdatePreset"];
   onLaunch: AgentPresetPanelProps["onLaunch"];
+  onLaunchInPane: AgentPresetPanelProps["onLaunchInPane"];
+  focusedPane: AgentPresetPanelProps["focusedPane"];
   onOpenPrompt: AgentPresetPanelProps["onOpenPrompt"];
   onCopyStartupInstruction: AgentPresetPanelProps["onCopyStartupInstruction"];
   onOpenOutputs: AgentPresetPanelProps["onOpenOutputs"];
@@ -246,6 +272,8 @@ function PresetControls({
   error,
   onUpdatePreset,
   onLaunch,
+  onLaunchInPane,
+  focusedPane,
   onOpenPrompt,
   onCopyStartupInstruction,
   onOpenOutputs,
@@ -421,16 +449,41 @@ function PresetControls({
         </p>
       ) : null}
 
-      <Button
-        type="button"
-        size="sm"
-        disabled={disabled}
-        onClick={() => onLaunch(preset.id)}
-        className="mt-1.5 w-full rounded-md"
-      >
-        <HugeiconsIcon icon={PlayIcon} size={13} strokeWidth={2} />
-        Launch {preset.name}
-      </Button>
+      <fieldset className="mt-1.5">
+        <legend className="mb-1 text-[10px] font-medium text-muted-foreground">
+          Launch target
+        </legend>
+        <div className="grid grid-cols-2 gap-1">
+          <Button
+            type="button"
+            size="sm"
+            disabled={disabled}
+            onClick={() => onLaunch(preset.id)}
+            className="min-w-0 rounded-md"
+            aria-label={`Launch ${preset.name} in a new tab`}
+          >
+            <HugeiconsIcon icon={PlayIcon} size={13} strokeWidth={2} />
+            <span className="truncate">New tab</span>
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={disabled || !focusedPane.available}
+            onClick={() => onLaunchInPane(preset.id)}
+            className="min-w-0 rounded-md"
+            aria-label={`Launch ${preset.name} in the focused pane`}
+            title={focusedPane.reason}
+          >
+            <HugeiconsIcon
+              icon={LayoutTwoColumnIcon}
+              size={13}
+              strokeWidth={1.8}
+            />
+            <span className="truncate">Focused pane</span>
+          </Button>
+        </div>
+      </fieldset>
     </div>
   );
 }

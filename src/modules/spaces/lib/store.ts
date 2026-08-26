@@ -30,7 +30,7 @@ export type SpaceState = {
   activeTabIndex: number;
 };
 
-export const SPACE_STORE_SCHEMA_VERSION = 4;
+export const SPACE_STORE_SCHEMA_VERSION = 5;
 
 const STORE_PATH = "terax-spaces.json";
 const KEY_SCHEMA_VERSION = "schemaVersion";

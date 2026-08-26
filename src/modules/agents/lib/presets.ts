@@ -11,6 +11,10 @@ export const AFFLOW_AGENT_PRESET_IDS = [
   "video-prompt",
 ] as const;
 
+export const MAX_CUSTOM_AGENT_PRESETS = 12;
+export const MAX_AGENT_PRESET_NAME_LENGTH = 64;
+export const MAX_AGENT_PRESET_PROMPT_BYTES = 128 * 1024;
+
 export const AFFLOW_PRESET_LAUNCHER_IDS = [
   "claude",
   "codex",
@@ -19,7 +23,9 @@ export const AFFLOW_PRESET_LAUNCHER_IDS = [
   "custom",
 ] as const;
 
-export type AfflowAgentPresetId = (typeof AFFLOW_AGENT_PRESET_IDS)[number];
+export type BuiltInAgentPresetId = (typeof AFFLOW_AGENT_PRESET_IDS)[number];
+export type CustomAgentPresetId = `preset-${string}`;
+export type AfflowAgentPresetId = BuiltInAgentPresetId | CustomAgentPresetId;
 export type AfflowPresetLauncherId =
   (typeof AFFLOW_PRESET_LAUNCHER_IDS)[number];
 
@@ -70,6 +76,17 @@ const defaultsById = new Map(
   DEFAULT_WORKSTATION_AGENT_PRESETS.map((preset) => [preset.id, preset]),
 );
 
+const CUSTOM_PRESET_ID_PATTERN = /^preset-[a-z0-9]{6,24}-[a-z0-9]{4,12}$/;
+
+export type NewAgentPresetInput = {
+  name: string;
+  prompt: string;
+};
+
+export type NewAgentPresetValidation =
+  | { ok: true; name: string; prompt: string }
+  | { ok: false; error: string };
+
 export function createDefaultWorkstationAgentPresets(): WorkstationAgentPreset[] {
   return DEFAULT_WORKSTATION_AGENT_PRESETS.map((preset) => ({ ...preset }));
 }
@@ -77,10 +94,72 @@ export function createDefaultWorkstationAgentPresets(): WorkstationAgentPreset[]
 export function isAfflowAgentPresetId(
   value: unknown,
 ): value is AfflowAgentPresetId {
+  return isBuiltInAgentPresetId(value) || isCustomAgentPresetId(value);
+}
+
+export function isBuiltInAgentPresetId(
+  value: unknown,
+): value is BuiltInAgentPresetId {
   return (
     typeof value === "string" &&
     (AFFLOW_AGENT_PRESET_IDS as readonly string[]).includes(value)
   );
+}
+
+export function isCustomAgentPresetId(
+  value: unknown,
+): value is CustomAgentPresetId {
+  return typeof value === "string" && CUSTOM_PRESET_ID_PATTERN.test(value);
+}
+
+export function newCustomAgentPresetId(): CustomAgentPresetId {
+  return `preset-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function customAgentPresetPromptFile(id: CustomAgentPresetId): string {
+  return `agents/custom/${id}/prompt.md`;
+}
+
+export function validateNewAgentPresetInput(
+  value: NewAgentPresetInput,
+): NewAgentPresetValidation {
+  const name = value.name.trim();
+  if (!name) return { ok: false, error: "Preset name is required." };
+  if (name.length > MAX_AGENT_PRESET_NAME_LENGTH) {
+    return {
+      ok: false,
+      error: `Keep the preset name under ${MAX_AGENT_PRESET_NAME_LENGTH} characters.`,
+    };
+  }
+  if (/\p{Cc}/u.test(name)) {
+    return { ok: false, error: "Preset name contains control characters." };
+  }
+  if (!value.prompt.trim()) {
+    return { ok: false, error: "Paste the agent prompt markdown." };
+  }
+  if (
+    new TextEncoder().encode(value.prompt).length >
+    MAX_AGENT_PRESET_PROMPT_BYTES
+  ) {
+    return {
+      ok: false,
+      error: "Keep the prompt under 128 KB.",
+    };
+  }
+  return { ok: true, name, prompt: value.prompt };
+}
+
+export function createCustomWorkstationAgentPreset(
+  name: string,
+  id = newCustomAgentPresetId(),
+): WorkstationAgentPreset {
+  return {
+    id,
+    name: name.trim(),
+    launcherId: "claude",
+    customCommand: null,
+    promptFile: customAgentPresetPromptFile(id),
+  };
 }
 
 export function isAfflowPresetLauncherId(
@@ -114,7 +193,13 @@ export function validateWorkstationAgentPreset(
   if (!isAfflowPresetLauncherId(raw.launcherId)) {
     return { ok: false, error: "Preset launcher is not supported." };
   }
-  const expectedPrompt = defaultsById.get(raw.id)?.promptFile ?? null;
+  const id = raw.id;
+  const expectedPrompt = isCustomAgentPresetId(id)
+    ? customAgentPresetPromptFile(id)
+    : defaultsById.get(id)?.promptFile;
+  if (expectedPrompt === undefined) {
+    return { ok: false, error: "Preset role is not supported." };
+  }
   if (raw.promptFile !== expectedPrompt) {
     return { ok: false, error: "Preset prompt path does not match its role." };
   }
@@ -124,7 +209,7 @@ export function validateWorkstationAgentPreset(
     return {
       ok: true,
       preset: {
-        id: raw.id,
+        id,
         name: raw.name.trim(),
         launcherId: raw.launcherId,
         customCommand: result.command,
@@ -141,7 +226,7 @@ export function validateWorkstationAgentPreset(
   return {
     ok: true,
     preset: {
-      id: raw.id,
+      id,
       name: raw.name.trim(),
       launcherId: raw.launcherId,
       customCommand: null,
@@ -197,19 +282,69 @@ function normalizePreset(
 export function normalizeWorkstationAgentPresets(
   value: unknown,
 ): WorkstationAgentPreset[] {
-  const firstById = new Map<AfflowAgentPresetId, unknown>();
+  const firstById = new Map<BuiltInAgentPresetId, unknown>();
+  const customPresets: WorkstationAgentPreset[] = [];
+  const customIds = new Set<CustomAgentPresetId>();
   if (Array.isArray(value)) {
     for (const candidate of value) {
       if (!candidate || typeof candidate !== "object") continue;
       const id = (candidate as Record<string, unknown>).id;
-      if (isAfflowAgentPresetId(id) && !firstById.has(id)) {
+      if (isBuiltInAgentPresetId(id) && !firstById.has(id)) {
         firstById.set(id, candidate);
+        continue;
+      }
+      if (
+        isCustomAgentPresetId(id) &&
+        !customIds.has(id) &&
+        customPresets.length < MAX_CUSTOM_AGENT_PRESETS
+      ) {
+        const normalized = normalizeCustomPreset(candidate, id);
+        if (!normalized) continue;
+        customIds.add(id);
+        customPresets.push(normalized);
       }
     }
   }
-  return DEFAULT_WORKSTATION_AGENT_PRESETS.map((fallback) =>
-    normalizePreset(firstById.get(fallback.id), fallback),
-  );
+  return [
+    ...DEFAULT_WORKSTATION_AGENT_PRESETS.map((fallback) =>
+      normalizePreset(firstById.get(fallback.id), fallback),
+    ),
+    ...customPresets,
+  ];
+}
+
+function normalizeCustomPreset(
+  value: unknown,
+  id: CustomAgentPresetId,
+): WorkstationAgentPreset | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const name = typeof raw.name === "string" ? raw.name.trim() : "";
+  if (!name || name.length > MAX_AGENT_PRESET_NAME_LENGTH) return null;
+  if (/\p{Cc}/u.test(name)) return null;
+  if (raw.promptFile !== customAgentPresetPromptFile(id)) return null;
+  if (!isAfflowPresetLauncherId(raw.launcherId)) return null;
+  if (raw.launcherId !== "custom") {
+    return {
+      id,
+      name,
+      launcherId: raw.launcherId,
+      customCommand: null,
+      promptFile: customAgentPresetPromptFile(id),
+    };
+  }
+  const custom = validatePresetCustomCommand(raw.customCommand);
+  return {
+    id,
+    name,
+    launcherId: "custom",
+    customCommand: custom.ok
+      ? custom.command
+      : typeof raw.customCommand === "string"
+        ? raw.customCommand.trim()
+        : null,
+    promptFile: customAgentPresetPromptFile(id),
+  };
 }
 
 export function startupInstructionForPreset(

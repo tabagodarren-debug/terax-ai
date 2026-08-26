@@ -1,0 +1,111 @@
+name: Afflow macOS Development Package
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: afflow-macos-dev-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+          key: afflow-macos-dev-verify
+
+      - uses: taiki-e/install-action@v2.86.3
+        with:
+          tool: cargo-nextest
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check frontend types
+        run: pnpm check-types
+
+      - name: Run frontend tests
+        run: pnpm test
+
+      - name: Check Rust
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Run Rust tests
+        working-directory: src-tauri
+        run: cargo nextest run --locked
+
+  package:
+    needs: verify
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            artifact: afflow-macos-apple-silicon
+          - target: x86_64-apple-darwin
+            artifact: afflow-macos-intel
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+          key: afflow-macos-dev-${{ matrix.target }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build unsigned DMG
+        env:
+          TERAX_CLI_TARGET: ${{ matrix.target }}
+        run: pnpm tauri build --bundles dmg --target ${{ matrix.target }}
+
+      - name: Verify package
+        shell: bash
+        run: |
+          set -euo pipefail
+          DMG=$(find "src-tauri/target/${{ matrix.target }}/release/bundle/dmg" -name 'Afflow_*.dmg' -type f -print -quit)
+          test -n "$DMG"
+          test -s "$DMG"
+          shasum -a 256 "$DMG"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/dmg/Afflow_*.dmg
+          if-no-files-found: error

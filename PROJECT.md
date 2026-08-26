@@ -528,6 +528,8 @@ You create production-ready image-to-video prompts for AI media tools.
 - Allow CLI selection and custom command configuration
 - Start terminals in the workstation root
 - Load or expose the relevant `prompt.md`
+- Create workstation-specific presets from a name and pasted `prompt.md`
+- Launch a selected preset in the focused idle pane after a terminal split
 - Add one-click opening of referenced output files
 
 **Exit criterion:** all four presets launch successfully using at least one installed CLI.
@@ -852,6 +854,8 @@ The MVP is complete only when all of the following are true:
 - [ ] Markdown, image, and video assets can be opened from the file tree.
 - [x] Four named agent presets are available.
 - [x] Specialized agents reference their own configurable prompt files.
+- [x] Custom agent presets persist their pasted prompt inside the workstation.
+- [x] A selected preset can launch in the focused idle split pane.
 - [x] At least one supported AI CLI can run in every agent terminal.
 - [x] At least four configured websites can launch in a dedicated normal browser window.
 - [x] Shared and per-workstation Afflow browser-profile modes are available.

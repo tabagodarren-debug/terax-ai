@@ -17,14 +17,19 @@ import {
   AgentNotificationsBridge,
   type AgentPresetAvailability,
   type AgentPresetUpdate,
+  createCustomWorkstationAgentPreset,
   detectAgentClis,
   findAgentLauncher,
+  type NewAgentPresetInput,
+  newCustomAgentPresetId,
   nextAttentionTarget,
   resolveWorkstationAgentCommand,
   resolveWorkstationFile,
   rootForWorkstation,
   startupInstructionForPreset,
+  validateNewAgentPresetInput,
   validateAgentLaunchCommand,
+  type WorkstationAgentPreset,
 } from "@/modules/agents";
 import {
   AgentRunBridge,
@@ -906,7 +911,77 @@ export default function App() {
     [],
   );
 
-  const launchAgentPreset = useCallback(
+  const createAgentPreset = useCallback(
+    async (input: NewAgentPresetInput): Promise<WorkstationAgentPreset> => {
+      const validation = validateNewAgentPresetInput(input);
+      if (!validation.ok) throw new Error(validation.error);
+      const state = useSpaces.getState();
+      const workstation = state.spaces.find(
+        (candidate) => candidate.id === state.activeId,
+      );
+      if (
+        workstation?.env.kind !== "local" ||
+        !authorizedAgentRoot ||
+        authorizedAgentRoot.workstationId !== workstation.id
+      ) {
+        throw new Error("Workstation folder is not ready.");
+      }
+
+      let id = newCustomAgentPresetId();
+      while (workstation.agentPresets.some((preset) => preset.id === id)) {
+        id = newCustomAgentPresetId();
+      }
+      const preset = createCustomWorkstationAgentPreset(validation.name, id);
+      const root = authorizedAgentRoot.root.replace(/[\\/]+$/, "");
+      const relativeDirectory = preset.promptFile?.slice(
+        0,
+        preset.promptFile.lastIndexOf("/"),
+      );
+      if (!preset.promptFile || !relativeDirectory) {
+        throw new Error("Preset prompt path is invalid.");
+      }
+      const directoryPath = `${root}/${relativeDirectory}`;
+      const promptPath = `${root}/${preset.promptFile}`;
+      let createdDirectory = false;
+      try {
+        await invoke("fs_create_dir", {
+          path: directoryPath,
+          workspace: workstation.env,
+        });
+        createdDirectory = true;
+        await invoke("fs_create_file", {
+          path: promptPath,
+          workspace: workstation.env,
+        });
+        await invoke("fs_write_file", {
+          path: promptPath,
+          content: validation.prompt,
+          workspace: workstation.env,
+          source: "afflow-agent-preset",
+        });
+        useSpaces.getState().addAgentPreset(workstation.id, preset);
+      } catch (error) {
+        if (createdDirectory) {
+          await invoke("fs_delete", {
+            path: directoryPath,
+            workspace: workstation.env,
+          }).catch(() => undefined);
+        }
+        throw error;
+      }
+      setAgentPromptAvailability((current) => ({
+        ...current,
+        [preset.id]: { available: true },
+      }));
+      toast.success("Agent preset created", {
+        description: preset.name,
+      });
+      return preset;
+    },
+    [authorizedAgentRoot],
+  );
+
+  const prepareAgentPresetLaunch = useCallback(
     (presetId: AfflowAgentPresetId) => {
       const state = useSpaces.getState();
       const workstation = state.spaces.find(
@@ -915,13 +990,15 @@ export default function App() {
       const preset = workstation?.agentPresets.find(
         (candidate) => candidate.id === presetId,
       );
-      if (!workstation || !preset || workstation.env.kind !== "local") return;
+      if (!workstation || !preset || workstation.env.kind !== "local") {
+        return null;
+      }
       if (
         !authorizedAgentRoot ||
         authorizedAgentRoot.workstationId !== workstation.id
       ) {
         toast.error("Workstation folder is not ready");
-        return;
+        return null;
       }
       if (
         preset.promptFile &&
@@ -930,7 +1007,7 @@ export default function App() {
         toast.error("Preset prompt is unavailable", {
           description: agentPromptAvailability[preset.id]?.reason,
         });
-        return;
+        return null;
       }
       if (
         preset.launcherId !== "custom" &&
@@ -940,7 +1017,7 @@ export default function App() {
         )
       ) {
         toast.error("Selected command line tool is unavailable");
-        return;
+        return null;
       }
       const command = resolveWorkstationAgentCommand(
         preset,
@@ -950,35 +1027,46 @@ export default function App() {
         toast.error("Agent command is invalid", {
           description: command.error,
         });
-        return;
+        return null;
       }
+      return {
+        preset,
+        command: command.command,
+        root: authorizedAgentRoot.root,
+      };
+    },
+    [agentCliDetections, agentPromptAvailability, authorizedAgentRoot],
+  );
 
+  const enablePresetHooks = useCallback((preset: WorkstationAgentPreset) => {
+    if (preset.launcherId === "custom") return Promise.resolve();
+    const launcher = findAgentLauncher(preset.launcherId);
+    if (!launcher.supportsHooks) return Promise.resolve();
+    return invoke("agent_enable_hooks", {
+      agent: preset.launcherId,
+    }).catch((error) => {
+      console.warn(
+        `[terax] could not enable ${preset.launcherId} notifications:`,
+        error,
+      );
+    });
+  }, []);
+
+  const launchAgentPreset = useCallback(
+    (presetId: AfflowAgentPresetId) => {
+      const launch = prepareAgentPresetLaunch(presetId);
+      if (!launch) return;
       const { leafIds: presetLeafIds } = newAgentGroupTab(
-        authorizedAgentRoot.root,
-        preset.name,
+        launch.root,
+        launch.preset.name,
         1,
       );
-      const hooksReady =
-        preset.launcherId === "custom"
-          ? Promise.resolve()
-          : (() => {
-              const launcher = findAgentLauncher(preset.launcherId);
-              return launcher.supportsHooks
-                ? invoke("agent_enable_hooks", {
-                    agent: preset.launcherId,
-                  }).catch((error) => {
-                    console.warn(
-                      `[terax] could not enable ${preset.launcherId} notifications:`,
-                      error,
-                    );
-                  })
-                : Promise.resolve();
-            })();
+      const hooksReady = enablePresetHooks(launch.preset);
 
       for (const leafId of presetLeafIds) {
         void (async () => {
           await Promise.all([whenSessionReady(leafId), hooksReady]);
-          if (!writeToSession(leafId, `${command.command}\r`)) {
+          if (!writeToSession(leafId, `${launch.command}\r`)) {
             console.error(
               `[afflow] agent terminal ${leafId} closed before launch`,
             );
@@ -986,12 +1074,71 @@ export default function App() {
         })();
       }
     },
-    [
-      agentCliDetections,
-      agentPromptAvailability,
-      authorizedAgentRoot,
-      newAgentGroupTab,
-    ],
+    [enablePresetHooks, newAgentGroupTab, prepareAgentPresetLaunch],
+  );
+
+  const launchAgentPresetInPane = useCallback(
+    (presetId: AfflowAgentPresetId) => {
+      const launch = prepareAgentPresetLaunch(presetId);
+      if (!launch) return;
+      const tabId = activeIdRef.current;
+      const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
+      if (tab?.kind !== "terminal" || leafIds(tab.paneTree).length < 2) {
+        toast.error("Split a terminal pane first");
+        return;
+      }
+      const leafId = tab.activeLeafId;
+      void (async () => {
+        await whenSessionReady(leafId);
+        if (await leafHasForegroundProcess(leafId)) {
+          toast.error("Focused pane is already running a process", {
+            description: "Focus an idle pane or create another split.",
+          });
+          return;
+        }
+        const currentTab = tabsRef.current.find(
+          (candidate) => candidate.id === tabId,
+        );
+        if (
+          activeIdRef.current !== tabId ||
+          currentTab?.kind !== "terminal" ||
+          currentTab.activeLeafId !== leafId ||
+          !hasLeaf(currentTab.paneTree, leafId)
+        ) {
+          toast.error("Focused pane changed before launch");
+          return;
+        }
+        await enablePresetHooks(launch.preset);
+        if (!writeToSession(leafId, `${launch.command}\r`)) {
+          toast.error("Focused pane closed before launch");
+          return;
+        }
+        terminalRefs.current.get(leafId)?.focus();
+        const instruction = startupInstructionForPreset(launch.preset);
+        if (instruction) {
+          try {
+            await writeTerminalClipboard(instruction);
+            toast.success(
+              `${launch.preset.name} launched in the focused pane`,
+              {
+                description:
+                  "The startup instruction is copied. Paste it when the agent is ready.",
+              },
+            );
+          } catch {
+            toast.success(
+              `${launch.preset.name} launched in the focused pane`,
+              {
+                description: "Use Copy instruction to load the preset prompt.",
+              },
+            );
+          }
+        } else {
+          toast.success(`${launch.preset.name} launched in the focused pane`);
+        }
+      })();
+    },
+    [enablePresetHooks, prepareAgentPresetLaunch],
   );
 
   const openAgentPrompt = useCallback(
@@ -1065,6 +1212,22 @@ export default function App() {
     }
   }, [authorizedAgentRoot]);
 
+  const focusedAgentPane = useMemo<AgentPresetMenuConfig["focusedPane"]>(() => {
+    if (!activeTerminalTab) {
+      return {
+        available: false,
+        reason: "Focus a terminal tab before launching into a pane.",
+      };
+    }
+    if (leafIds(activeTerminalTab.paneTree).length < 2) {
+      return {
+        available: false,
+        reason: "Split the terminal right or down first.",
+      };
+    }
+    return { available: true };
+  }, [activeTerminalTab]);
+
   const agentPresetMenu = useMemo<AgentPresetMenuConfig>(
     () => ({
       presets: activeWorkstation?.agentPresets ?? [],
@@ -1077,7 +1240,10 @@ export default function App() {
       loading: !spacesHydrated || agentCliLoading || agentContextLoading,
       error: agentCliError ?? agentContextError,
       onUpdatePreset: updateAgentPreset,
+      onCreatePreset: createAgentPreset,
       onLaunch: launchAgentPreset,
+      onLaunchInPane: launchAgentPresetInPane,
+      focusedPane: focusedAgentPane,
       onOpenPrompt: (presetId) => void openAgentPrompt(presetId),
       onCopyStartupInstruction: (presetId) =>
         void copyAgentStartupInstruction(presetId),
@@ -1094,7 +1260,10 @@ export default function App() {
       agentPromptAvailability,
       authorizedAgentRoot,
       copyAgentStartupInstruction,
+      createAgentPreset,
+      focusedAgentPane,
       launchAgentPreset,
+      launchAgentPresetInPane,
       openAgentOutputs,
       openAgentPrompt,
       spacesHydrated,

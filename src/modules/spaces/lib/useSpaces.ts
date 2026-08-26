@@ -2,7 +2,10 @@ import {
   type AfflowAgentPresetId,
   createDefaultWorkstationAgentPresets,
   DEFAULT_WORKSTATION_AGENT_PRESETS,
+  isCustomAgentPresetId,
+  MAX_CUSTOM_AGENT_PRESETS,
   normalizeWorkstationAgentPresets,
+  validateWorkstationAgentPreset,
   type WorkstationAgentPreset,
 } from "@/modules/agents/lib/presets";
 import {
@@ -69,6 +72,14 @@ type State = {
     workstationId: string,
     presetId: AfflowAgentPresetId,
     update: AgentPresetUpdate,
+  ) => void;
+  addAgentPreset: (
+    workstationId: string,
+    preset: WorkstationAgentPreset,
+  ) => void;
+  removeAgentPreset: (
+    workstationId: string,
+    presetId: AfflowAgentPresetId,
   ) => void;
   resetAgentPreset: (
     workstationId: string,
@@ -237,6 +248,54 @@ export const useSpaces = create<State>((set, get) => ({
         item.id === presetId ? { ...item, ...update } : item,
       ),
     );
+    const spaces = current.map((space) =>
+      space.id === workstationId
+        ? { ...space, agentPresets, updatedAt: Date.now() }
+        : space,
+    );
+    set({ spaces });
+    void saveSpacesList(spaces);
+  },
+
+  addAgentPreset: (workstationId, preset) => {
+    const current = get().spaces;
+    const workstation = current.find((space) => space.id === workstationId);
+    if (!workstation) throw new Error("Workstation is unavailable.");
+    if (!isCustomAgentPresetId(preset.id)) {
+      throw new Error("Only custom presets can be added.");
+    }
+    if (workstation.agentPresets.some((item) => item.id === preset.id)) {
+      throw new Error("Agent preset already exists.");
+    }
+    const customCount = workstation.agentPresets.filter((item) =>
+      isCustomAgentPresetId(item.id),
+    ).length;
+    if (customCount >= MAX_CUSTOM_AGENT_PRESETS) {
+      throw new Error(
+        `A workstation can have at most ${MAX_CUSTOM_AGENT_PRESETS} custom presets.`,
+      );
+    }
+    const validation = validateWorkstationAgentPreset(preset);
+    if (!validation.ok) throw new Error(validation.error);
+    const agentPresets = [...workstation.agentPresets, validation.preset];
+    const spaces = current.map((space) =>
+      space.id === workstationId
+        ? { ...space, agentPresets, updatedAt: Date.now() }
+        : space,
+    );
+    set({ spaces });
+    void saveSpacesList(spaces);
+  },
+
+  removeAgentPreset: (workstationId, presetId) => {
+    if (!isCustomAgentPresetId(presetId)) return;
+    const current = get().spaces;
+    const workstation = current.find((space) => space.id === workstationId);
+    if (!workstation) return;
+    const agentPresets = workstation.agentPresets.filter(
+      (preset) => preset.id !== presetId,
+    );
+    if (agentPresets.length === workstation.agentPresets.length) return;
     const spaces = current.map((space) =>
       space.id === workstationId
         ? { ...space, agentPresets, updatedAt: Date.now() }

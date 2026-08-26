@@ -32,7 +32,10 @@ function createProps(
     workstationRoot: "C:\\Workstations\\Creator",
     onSelect: vi.fn(),
     onUpdatePreset: vi.fn(),
+    onRequestCreatePreset: vi.fn(),
     onLaunch: vi.fn(),
+    onLaunchInPane: vi.fn(),
+    focusedPane: { available: true },
     onOpenPrompt: vi.fn(),
     onCopyStartupInstruction: vi.fn(),
     onOpenOutputs: vi.fn(),
@@ -99,6 +102,7 @@ function findControl(root: TestElement, label: string): TestElement {
 }
 
 function click(element: TestElement | undefined) {
+  if (element?.props.disabled === true) return;
   (element?.props.onClick as (() => void) | undefined)?.();
 }
 
@@ -205,7 +209,8 @@ describe("AgentPresetPanel", () => {
     click(findControl(root, "Open prompt"));
     click(findControl(root, "Copy instruction"));
     click(findControl(root, "Outputs"));
-    click(findControl(root, "Launch Script Generator"));
+    click(findControl(root, "New tab"));
+    click(findControl(root, "Focused pane"));
 
     expect(props.onOpenPrompt).toHaveBeenCalledExactlyOnceWith(
       "script-generator",
@@ -217,6 +222,35 @@ describe("AgentPresetPanel", () => {
       "script-generator",
     );
     expect(props.onLaunch).toHaveBeenCalledExactlyOnceWith("script-generator");
+    expect(props.onLaunchInPane).toHaveBeenCalledExactlyOnceWith(
+      "script-generator",
+    );
+  });
+
+  it("requests custom preset creation from the panel header", () => {
+    const props = createProps();
+    const panel = AgentPresetPanel(props);
+
+    click(findControl(panel, "New preset"));
+
+    expect(props.onRequestCreatePreset).toHaveBeenCalledOnce();
+  });
+
+  it("disables focused-pane launch until a split pane is available", () => {
+    const props = createProps({
+      focusedPane: {
+        available: false,
+        reason: "Split the terminal right or down first.",
+      },
+    });
+    const focusedPane = findControl(controls(props), "Focused pane");
+
+    expect(focusedPane.props.disabled).toBe(true);
+    expect(focusedPane.props.title).toBe(
+      "Split the terminal right or down first.",
+    );
+    click(focusedPane);
+    expect(props.onLaunchInPane).not.toHaveBeenCalled();
   });
 
   it("surfaces unavailable CLI, missing root, and missing prompt states", () => {
