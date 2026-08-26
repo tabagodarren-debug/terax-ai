@@ -2,6 +2,9 @@ name: Afflow macOS Development Package
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - "afflow/macos-test-*"
 
 concurrency:
   group: afflow-macos-dev-${{ github.ref }}
